@@ -35,13 +35,6 @@ import qualified Data.ByteString.Lazy as BS
 
 
 
--- | This function converts a program to a declaration environment.
-
-programToDeclEnv :: Core.Program -> Env (Sourced String) Core.Term
-programToDeclEnv (Core.Program defs) = definitionsToEnvironment defs
-
-
-
 -- | This function parses and elaborates a program.
 
 loadProgram :: DeclContext
@@ -60,6 +53,24 @@ loadProgram dctx src =
               { Core.termDeclarations =
                   definitions dctx'
               })
+
+
+
+
+-- | This function parses and elaborates a library.
+
+loadLibrary :: DeclContext
+            -> String
+            -> Either String DeclContext
+loadLibrary dctx src =
+  case parseProgram src of
+    Left err -> Left err
+    Right p ->
+      case runElaborator (PD.elaborator (ElabProgram dctx p)) of
+        Left elabErr ->
+          Left (PD.showElabError elabErr)
+        Right (dctx', _) ->
+          Right dctx'
 
 
 
@@ -98,12 +109,12 @@ loadRedeemer dctx src =
 -- transaction.
 
 buildValidationScript
-  :: Core.Program
+  :: DeclContext
   -> Core.Program
   -> Core.Program
   -> Either String (Core.Term, Env (Sourced String) Core.Term)
 buildValidationScript
-  (Core.Program stdlibDefs)
+  (DeclContext _ stdlibDefs)
   (Core.Program valDefs)
   (Core.Program redDefs)
   =
