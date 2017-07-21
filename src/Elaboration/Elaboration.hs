@@ -807,9 +807,9 @@ synthify dctx hctx (In (Bind m sc)) =
                 ("Expected a computation type but found " ++ pretty ca
                   ++ "\nWhen checking term " ++ pretty (instantiate0 m)))
 synthify dctx _ (In TxHash) =
-  return (Core.txHashH, compH byteStringH, dctx)
+  return (Core.txHashH, byteStringH, dctx)
 synthify dctx _ (In TxDistrHash) =
-  return (Core.txDistrHashH, compH byteStringH, dctx)
+  return (Core.txDistrHashH, byteStringH, dctx)
 synthify dctx _ (In (PrimData (PrimInt x))) =
   return (Core.primIntH x, intH, dctx)
 synthify dctx _ (In (PrimData (PrimFloat x))) =
