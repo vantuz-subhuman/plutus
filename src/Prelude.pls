@@ -669,8 +669,12 @@ addressHash : ByteString -> ByteString {
   addressHash x = !blake2b_224 (!sha3_256 x)
 }
 
-
-
+-- Make a StakeholderId from a public key. #5840 is CBOR encoding for
+-- "64-byte string"
+--
+mkStakeholderId : ByteString -> ByteString {
+  mkStakeholderId x = addressHash (!concatenate #5840 x)
+}
 
 
 -- Multisig verification
@@ -684,7 +688,7 @@ verifyHelper : ByteString -> ByteString -> Maybe (Pair ByteString ByteString) ->
   verifyHelper dat kh mbKS = case mbKS of {
     Nothing -> False ;
     (Just (MkPair k s)) ->
-        and (!equalsByteString kh (addressHash k))
+        and (!equalsByteString kh (mkStakeholderId k))
             (!verifySignature k dat s)
   }
 }
