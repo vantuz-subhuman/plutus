@@ -1,11 +1,11 @@
 {-# OPTIONS -Wall #-}
-{-# LANGUAGE DeriveFoldable #-}
-{-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE DeriveTraversable #-}
-{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE DeriveFoldable        #-}
+{-# LANGUAGE DeriveFunctor         #-}
+{-# LANGUAGE DeriveTraversable     #-}
+{-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE TypeFamilies          #-}
+{-# LANGUAGE TypeSynonymInstances  #-}
 
 
 
@@ -15,16 +15,16 @@
 
 module Plutus.Term where
 
-import PlutusTypes.Type
+import           PlutusTypes.Type
 
-import Utils.ABT
-import Utils.Names
-import Utils.Pretty
-import Utils.Vars
+import           Utils.ABT
+import           Utils.Names
+import           Utils.Pretty
+import           Utils.Vars
 
-import Control.Monad.Identity
-import qualified Data.ByteString.Lazy as BS
-import Data.List (intercalate)
+import           Control.Monad.Identity
+import qualified Data.ByteString.Lazy   as BS
+import           Data.List              (intercalate)
 
 
 
@@ -44,7 +44,6 @@ data TermF r
   | Failure
   | Bind r r
   | TxHash
-  | TxDistrHash
   | PrimData PrimData
   | Builtin String [r]
   deriving (Show,Functor,Foldable,Traversable)
@@ -96,7 +95,7 @@ type Clause = ClauseF (Scope TermF)
 data PatternF r = ConPat String [r]
   deriving (Show,Functor,Foldable,Traversable)
 
-  
+
 type Pattern = ABT PatternF
 
 
@@ -137,10 +136,10 @@ letH tmds n0 =
                  xs0
                  (caseH (map (Var . Free . FreeVar) xs0) clauses)
              )
-    
+
     isVarPat :: Pattern -> Bool
     isVarPat (Var _) = True
-    isVarPat _ = False
+    isVarPat _       = False
 
 lamH :: String -> Term -> Term
 lamH v b = In (Lam (scope [v] b))
@@ -171,9 +170,6 @@ bindH x m n = In (Bind (scope [] m) (scope [x] n))
 
 txHashH :: Term
 txHashH = In TxHash
-
-txDistrHashH :: Term
-txDistrHashH = In TxDistrHash
 
 primIntH :: Int -> Term
 primIntH x = In (PrimData (PrimInt x))
@@ -222,7 +218,7 @@ data TermParenLoc
 
 instance Parens Term where
   type Loc Term = TermParenLoc
-  
+
   parenLoc (Var _) =
     [AnnTerm,LetArg,LetBody,LamBody,AppFun,AppArg,ConArg,CaseArg,ClauseBody,BindArg,BindBody]
   parenLoc (In (Decname _)) =
@@ -249,8 +245,6 @@ instance Parens Term where
     [LetArg,LetBody,LamBody,CaseArg,ClauseBody,BindArg,BindBody]
   parenLoc (In TxHash) =
     [AnnTerm,LetArg,LetBody,LamBody,AppFun,AppArg,ConArg,CaseArg,ClauseBody,BindArg,BindBody]
-  parenLoc (In TxDistrHash) =
-    [AnnTerm,LetArg,LetBody,LamBody,AppFun,AppArg,ConArg,CaseArg,ClauseBody,BindArg,BindBody]
   parenLoc (In (PrimData (PrimInt _))) =
     [AnnTerm,LetArg,LetBody,LamBody,AppFun,AppArg,ConArg,CaseArg,ClauseBody,BindArg,BindBody]
   parenLoc (In (PrimData (PrimFloat _))) =
@@ -261,7 +255,7 @@ instance Parens Term where
     [AnnTerm,LetArg,LetBody,LamBody,AppFun,AppArg,ConArg,CaseArg,ClauseBody,BindArg,BindBody]
   parenLoc (In (Builtin _ _)) =
     [AnnTerm,LetArg,LetBody,LamBody,CaseArg,ClauseBody,BindArg,BindBody]
-    
+
 
   parenRec (Var v) =
     name v
@@ -325,7 +319,7 @@ instance Parens Term where
       ++ " }"
     where
       (xms,n0) = gatherBinds b
-      
+
       gatherBinds :: Term -> ([(String, Term)], Term)
       gatherBinds (In (Bind m sc)) =
         let (rs,n) = gatherBinds (body sc)
@@ -333,8 +327,6 @@ instance Parens Term where
       gatherBinds n = ([], n)
   parenRec (In TxHash) =
     "txhash"
-  parenRec (In TxDistrHash) =
-    "txdistrhash"
   parenRec (In (PrimData (PrimInt x))) =
     show x
   parenRec (In (PrimData (PrimFloat x))) =
@@ -358,11 +350,11 @@ data PatternParenLoc = ConPatArg
 
 instance Parens Pattern where
   type Loc Pattern = PatternParenLoc
-  
+
   parenLoc (Var _)            = [ConPatArg]
   parenLoc (In (ConPat _ [])) = [ConPatArg]
   parenLoc (In (ConPat _ _))  = []
-  
+
   parenRec (Var v) =
     name v
   parenRec (In (ConPat c [])) = c

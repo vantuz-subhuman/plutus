@@ -1,12 +1,12 @@
 {-# OPTIONS -Wall #-}
-{-# LANGUAGE DeriveFoldable #-}
-{-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE DeriveTraversable #-}
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE DeriveFoldable        #-}
+{-# LANGUAGE DeriveFunctor         #-}
+{-# LANGUAGE DeriveGeneric         #-}
+{-# LANGUAGE DeriveTraversable     #-}
+{-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE TypeFamilies          #-}
+{-# LANGUAGE TypeSynonymInstances  #-}
 
 
 
@@ -17,20 +17,20 @@
 
 module PlutusCore.Term where
 
-import PlutusTypes.Type
-import Utils.ABT
-import Utils.JSABT
-import Utils.Names
-import Utils.Pretty
-import Utils.Vars
+import           PlutusTypes.Type
+import           Utils.ABT
+import           Utils.JSABT
+import           Utils.Names
+import           Utils.Pretty
+import           Utils.Vars
 
-import Control.Monad.State
-import qualified Data.ByteString.Lazy as BS
+import           Control.Monad.State
+import qualified Data.ByteString.Lazy       as BS
 import qualified Data.ByteString.Lazy.Char8 as BSChar8
-import Data.Functor.Identity
-import Data.List (intercalate)
+import           Data.Functor.Identity
+import           Data.List                  (intercalate)
 
-import GHC.Generics hiding (Constructor)
+import           GHC.Generics               hiding (Constructor)
 
 
 
@@ -53,7 +53,6 @@ data TermF r
   | Failure
   | Bind r r
   | TxHash
-  | TxDistrHash
   | PrimData PrimData
   | Builtin String [r]
   deriving (Functor,Foldable,Traversable,Generic)
@@ -128,9 +127,6 @@ bindH m x n = In (Bind (scope [] m) (scope [x] n))
 txHashH :: Term
 txHashH = In TxHash
 
-txDistrHashH :: Term
-txDistrHashH = In TxDistrHash
-
 primIntH :: Int -> Term
 primIntH x = In (PrimData (PrimInt x))
 
@@ -163,7 +159,7 @@ prettyPrimData (PrimByteString x) =
 
 instance Parens Term where
   type Loc Term = ()
-  
+
   parenLoc _ = [()]
 
   parenRec (Var v) =
@@ -205,7 +201,7 @@ instance Parens Term where
       auxPat :: SimplePattern -> String
       auxPat (VarPat x) = x
       auxPat (ConPat c) = c
-      
+
       auxClause :: Clause -> String
       auxClause (Clause con sc) =
         "cl("
@@ -230,7 +226,6 @@ instance Parens Term where
     ++ parenthesize Nothing (body sc)
     ++ ")"
   parenRec (In TxHash) = "txinfo()"
-  parenRec (In TxDistrHash) = "txdistrinfo()"
   parenRec (In (PrimData pd)) = prettyPrimData pd
   parenRec (In (Builtin n ms)) =
     "buildin[" ++ n ++ "]("
@@ -250,7 +245,7 @@ instance ToJS Term where
       getVar i =
         do (_,ctx) <- get
            return (ctx !! i)
-      
+
       withVar :: (String -> State (Int,[String]) a) -> State (Int,[String]) (String,a)
       withVar f =
         do (i,ctx) <- get
@@ -260,7 +255,7 @@ instance ToJS Term where
            (i',_) <- get
            put (i',ctx)
            return (x,a)
-      
+
       withVars :: Int -> ([String] -> State (Int,[String]) a) -> State (Int,[String]) ([String],a)
       withVars n f =
         do (i,ctx) <- get
@@ -269,7 +264,7 @@ instance ToJS Term where
            a <- f xs
            put (i+n, ctx)
            return (xs,a)
-      
+
       go :: Term -> State (Int,[String]) JSABT
       go (Var (Free _)) =
         error "There should never be free vars in a JS-able term."
@@ -309,15 +304,13 @@ instance ToJS Term where
            return $ JSABT "Bind" [m', JSScope [x] b]
       go (In TxHash) =
         return $ JSABT "TxHash" []
-      go (In TxDistrHash) =
-        return $ JSABT "TxDistrHash" []
       go (In (PrimData pd)) =
         do pd' <- goPrimData pd
            return $ JSABT "PrimData" [pd']
       go (In (Builtin n ms)) =
         do ms' <- mapM (go . instantiate0) ms
            return $ JSABT "Builtin" [JSString n, JSArray ms']
-      
+
       goPrimData :: PrimData -> State (Int,[String]) JSABT
       goPrimData (PrimInt i) =
         return $ JSABT "PrimInt" [JSInt i]
@@ -325,14 +318,14 @@ instance ToJS Term where
         return $ JSABT "PrimFloat" [JSFloat f]
       goPrimData (PrimByteString bs) =
         return $ JSABT "PrimByteString" [JSString (BSChar8.unpack bs)]
-      
+
       goClause :: Clause -> State (Int,[String]) JSABT
       goClause (Clause c sc) =
         do p' <- goSimplePattern c
            (xs, b) <- withVars (length (names sc)) $ \_ ->
                         go (body sc)
            return $ JSABT "Clause" [p', JSScope xs b]
-      
+
       goSimplePattern :: SimplePattern -> State (Int,[String]) JSABT
       goSimplePattern (VarPat x) =
         return $ JSABT "VarPat" [JSString x]

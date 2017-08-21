@@ -7,14 +7,14 @@
 
 module PlutusCore.CKMachine where
 
-import PlutusCore.BuiltinEvaluation
-import PlutusCore.EvaluatorTypes
-import PlutusCore.PatternMatching
-import PlutusCore.Term
-import Utils.ABT
-import Utils.Env
-import Utils.Names
-import Utils.Pretty
+import           PlutusCore.BuiltinEvaluation
+import           PlutusCore.EvaluatorTypes
+import           PlutusCore.PatternMatching
+import           PlutusCore.Term
+import           Utils.ABT
+import           Utils.Env
+import           Utils.Names
+import           Utils.Pretty
 
 
 
@@ -67,8 +67,6 @@ rec petrol txinfo denv stk (In (Bind m sc)) =
   rec (petrol - 1) txinfo denv (InBind sc : stk) (instantiate0 m)
 rec petrol txinfo denv stk (In TxHash) =
   ret (petrol - 1) txinfo denv stk (primByteStringH (txHash txinfo))
-rec petrol txinfo denv stk (In TxDistrHash) =
-  ret (petrol - 1) txinfo denv stk (primByteStringH (txDistrHash txinfo))
 rec petrol txinfo denv stk m@(In (PrimData _)) =
   ret (petrol - 1) txinfo denv stk m
 rec petrol txinfo denv stk (In (Builtin n [])) =
@@ -99,7 +97,7 @@ ret petrol txinfo denv (InAppRight f : stk) x =
       ret (petrol - 1) txinfo denv stk (appH f x)
 ret petrol txinfo denv (InCon c revls rs : stk) m =
   case rs of
-    [] -> ret (petrol - 1) txinfo denv stk (conH c (reverse (m:revls)))
+    []     -> ret (petrol - 1) txinfo denv stk (conH c (reverse (m:revls)))
     m':rs' -> rec (petrol - 1) txinfo denv (InCon c (m:revls) rs' : stk) m'
 ret petrol txinfo denv (InCase cs : stk) m =
   case matchClauses cs m of
