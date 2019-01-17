@@ -1,0 +1,663 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html xmlns="http://www.w3.org/1999/xhtml"><head><link rel="stylesheet" type="text/css" href="style.css" /><script type="text/javascript" src="highlight.js"></script></head><body><pre><span class="hs-comment">-- | This module defines Haskell data types that simplify construction of PLC types and terms.</span><span>
+</span><a name="line-2"></a><span>
+</span><a name="line-3"></a><span class="hs-pragma">{-# LANGUAGE OverloadedStrings #-}</span><span>
+</span><a name="line-4"></a><span>
+</span><a name="line-5"></a><span class="hs-keyword">module</span><span> </span><span class="hs-identifier">Language.PlutusCore.StdLib.Type</span><span>
+</span><a name="line-6"></a><span>    </span><span class="hs-special">(</span><span> </span><a href="Language.PlutusCore.StdLib.Type.html#RecursiveType"><span class="hs-identifier hs-type">RecursiveType</span></a><span> </span><span class="hs-special">(</span><span class="hs-glyph">..</span><span class="hs-special">)</span><span>
+</span><a name="line-7"></a><span>    </span><span class="hs-special">,</span><span> </span><a href="Language.PlutusCore.StdLib.Type.html#makeRecursiveType"><span class="hs-identifier hs-var">makeRecursiveType</span></a><span>
+</span><a name="line-8"></a><span>    </span><span class="hs-special">)</span><span> </span><span class="hs-keyword">where</span><span>
+</span><a name="line-9"></a><span>
+</span><a name="line-10"></a><span class="hs-keyword">import</span><span>           </span><a href="Language.PlutusCore.MkPlc.html"><span class="hs-identifier">Language.PlutusCore.MkPlc</span></a><span>
+</span><a name="line-11"></a><span class="hs-keyword">import</span><span>           </span><a href="Language.PlutusCore.Name.html"><span class="hs-identifier">Language.PlutusCore.Name</span></a><span>
+</span><a name="line-12"></a><span class="hs-keyword">import</span><span>           </span><a href="Language.PlutusCore.Pretty.html"><span class="hs-identifier">Language.PlutusCore.Pretty</span></a><span>
+</span><a name="line-13"></a><span class="hs-keyword">import</span><span>           </span><a href="Language.PlutusCore.Quote.html"><span class="hs-identifier">Language.PlutusCore.Quote</span></a><span>
+</span><a name="line-14"></a><span class="hs-keyword">import</span><span>           </span><a href="Language.PlutusCore.Type.html"><span class="hs-identifier">Language.PlutusCore.Type</span></a><span>
+</span><a name="line-15"></a><span class="hs-keyword">import</span><span>           </span><a href="PlutusPrelude.html"><span class="hs-identifier">PlutusPrelude</span></a><span>
+</span><a name="line-16"></a><span>
+</span><a name="line-17"></a><span class="hs-comment">{- Note [Arity of patterns functors]
+The arity of a pattern functor is the number of arguments the pattern functor receives in addition
+to the first argument representing the recursive case. So
+@f :: * -&gt; *@                           has arity 0
+@f :: (k -&gt; *) -&gt; k -&gt; *@               has arity 1
+@f :: (k1 -&gt; k2 -&gt; *) -&gt; k1 -&gt; k2 -&gt; *@ has arity 2
+etc
+-}</span><span>
+</span><a name="line-25"></a><span>
+</span><a name="line-26"></a><span class="hs-comment">{- Note [InterList]
+This data type is much like the 'list' data type, but it receives two types arguments rather than one
+and &quot;interleaves&quot; them (see 'example_InterList').
+
+    data InterList a b
+        = InterNil
+        | InterCons a b (InterList b a)
+
+    example_InterList :: InterList Char Int
+    example_InterList = InterCons 'a' 1 . InterCons 2 'b' . InterCons 'c' 3 $ InterNil
+
+The data type is interesting, because we need some way of getting
+
+    fix2 :: ((k1 -&gt; k2 -&gt; *) -&gt; k1 -&gt; k2 -&gt; *) -&gt; k1 -&gt; k2 -&gt; *
+
+in order to encode it directly, so we use this data type in examples in order to show admissibility
+of 'fix2' which is an instance of the more generic
+
+    fix :: (k -&gt; k) -&gt; k
+
+I.e. we show how the more generic 'fix' can be encoded for any particular 'k' by taking
+@k ~ (k1 -&gt; k2 -&gt; *)@ as example and constructing 'fix2'.
+-}</span><span>
+</span><a name="line-49"></a><span>
+</span><a name="line-50"></a><span class="hs-comment">{- Note [Natural representation]
+Having @fix :: (* -&gt; *) -&gt; *@ we can easily define the @list@ data type as a fixed point of
+an appropriate pattern functor:
+
+    listF = \(a :: *) (list :: *) -&gt; all (r :: *). r -&gt; (a -&gt; list -&gt; r) -&gt; r
+    list  = \(a :: *) -&gt; fix (listF a) a
+
+There are a few problems with this definition however:
+
+1. In @listF@ there is no indication that @list@ is supposed to contain elements of type @a@.
+So @listF@ binds both @a@ and @list@, but does not specify there is a relation between these two
+things. The burden of connecting @a@ and @list@ together is on the caller, which is not a big deal,
+because the only callers are @fix@, in terms of which the data type is defined, and @wrap@ that
+allows to define the constructors of the data type, but still, this way the code looks strangely
+structured.
+
+2. Related to 1: such encoding diverges from what one would write having a data construction
+machinery. A standard Haskell definition would be
+
+    data List a
+        = Nil
+        | Cons a (List a)
+
+In this definition we explicitly apply @List@ to @a@ in the @Cons@ case. Thus, the encoding looks
+somewhat unnatural.
+
+3. @wrap@ constructing a @list@ must carry @listF a@ in the same way @fix@ carries it. This makes
+it very hard to construct terms using the AST directly as shown in
+@plutus/language-plutus-core/docs/Holed types.md@.
+
+4. There are data types that can't be defined this way. See Note [InterList] for one example.
+
+There is however an approach that allows to encode data types in a &quot;natural&quot; way, does not cause
+any trouble while constructing data types and can handle much more data types than what is shown
+above. Here is how the @list@ example looks like with it:
+
+    listF = \(list :: * -&gt; *) (a :: *) -&gt; all (r :: *). r -&gt; (a -&gt; list a -&gt; r) -&gt; r
+    list  = \(a :: *) -&gt; fix listF a
+
+I.e. instead of tying the knot over @list :: *@ we tie the knot over @list :: * -&gt; *@. This simple
+trick solves all the problems described avove.
+
+But the code is actually ill-kinded. The reason for this is that @fix :: (* -&gt; *) -&gt; *@ is no longer
+enough, because we're taking a fixed point of a pattern functor of kind @(* -&gt; *) -&gt; * -&gt; *@
+rather than just @* -&gt; *@. Hence we need a more permissive fixed-point operator.
+
+Read next: Note [The kind of fix].
+-}</span><span>
+</span><a name="line-98"></a><span>
+</span><a name="line-99"></a><span class="hs-comment">{- Note [The kind of fix]
+In Note [Natural representation] we concluded that @fix :: (* -&gt; *) -&gt; *@ is not enough to encode
+@list@ in a satisfying way. In that particular case it would be enough to have
+
+    fix :: ((* -&gt; *) -&gt; * -&gt; *) -&gt; * -&gt; *
+
+but what about other cases? The example from Note [InterList] requires
+
+    fix :: ((* -&gt; * -&gt; *) -&gt; * -&gt; * -&gt; *) -&gt; * -&gt; * -&gt; *
+
+and of course we still need
+
+    fix :: (* -&gt; *) -&gt; *
+
+occasionally. This suggests to change the kind signature of @fix@ to
+
+    fix :: (k -&gt; k) -&gt; k
+
+which covers all those cases. However,
+
+1. It also can be instantiated as @fix :: (size -&gt; size) -&gt; size@ which doesn't make sense.
+2. It's not clear how to implement such @fix@. See @docs/fomega/deep-isorecursive/README.md@ for details.
+
+But it turns out that
+
+    ifix :: ((k -&gt; *) -&gt; k -&gt; *) -&gt; k -&gt; *
+
+is enough for all cases.
+
+Read next: Note [Packing n-ary pattern functors semantically].
+-}</span><span>
+</span><a name="line-130"></a><span>
+</span><a name="line-131"></a><span class="hs-comment">{- Note [Packing n-ary pattern functors semantically]
+An n-ary pattern functor has the following generic signature:
+
+    patN :: k -&gt; k
+
+where @k@ is of the @k1 -&gt; k2 -&gt; ... -&gt; *@ form. We need to encode 'patN' as an equivalent 1-ary
+pattern functor with this signature:
+
+    pat1 :: ((k' -&gt; *) -&gt; k' -&gt; *
+
+because that's what 'ifix' accepts.
+
+@plutus/docs/fomega/mutual-type-level-recursion/IFixIsEnough.agda@ describes the encoding trick
+at great detail, but let's look at an example here. The pattern functor of 'InterList'
+(see Note [InterList]) is defined as
+
+    interlistF =
+        \(interlist :: * -&gt; * -&gt; *) (a :: *) (b :: *) -&gt;
+            all (r :: *). r -&gt; (a -&gt; b -&gt; interlist b a -&gt; r) -&gt; r
+
+We can't pass the pattern functor to 'ifix', because it's of kind
+
+    ((* -&gt; * -&gt; *) -&gt; * -&gt; * -&gt; *) -&gt; * -&gt; * -&gt; *
+
+So we're going to &quot;pack&quot; the pattern functor to make it a 1-ary one. The idea is simple:
+instead of passing two arguments to the recursive case, we pass a single continuation that applies
+a function it receives to those two arguments. Morever, we can define the packed version of
+'interlistF' in terms of 'interlistF' itself. It looks like this:
+
+    withSpine =
+        \(rec :: ((* -&gt; * -&gt; *) -&gt; *) -&gt; *) -&gt;
+            \(a :: *) (b :: *) -&gt; rec (\(interlist :: * -&gt; * -&gt; *) -&gt; interlist a b)
+
+    interlistF' =
+        \(rec :: ((* -&gt; * -&gt; *) -&gt; *) -&gt; *) (spine :: (* -&gt; * -&gt; *) -&gt; *) -&gt;
+            spine (\(a :: *) (b :: *) -&gt; interlistF (withSpine rec) a b)
+
+Here 'spine' encapsulates 'a' and 'b' as arguments passed to a function 'spine' receives.
+This even can be guessed from its signature:
+
+    spine :: (* -&gt; * -&gt; *) -&gt; *
+
+which can be read as &quot;give me a function of two arguments and I'll provide those arguments and
+return the result&quot;.
+
+'withSpine' on the other hand receives
+
+1. a function that expects a CPS-transformed spine
+2. two arguments, 'a' and 'b', which together form a spine that is not CPS-trasformed
+
+and then 'withSpine' applies said function to the spine by CPSing it first.
+
+So nothing interesting happens here: we just pack/unpack spines using continuations.
+
+If we eta-contract @interlistF'@, we'll get
+
+    interlistF' =
+        \(rec :: ((* -&gt; * -&gt; *) -&gt; *) -&gt; *) (spine :: (* -&gt; * -&gt; *) -&gt; *) -&gt;
+            spine (interlistF (withSpine rec))
+
+And this can be generalized to arbitrary n-ary pattern functors:
+
+    toPat1 =
+        \(withSpine :: ((k -&gt; *) -&gt; *) -&gt; k) (patN :: k -&gt; k) -&gt;
+            \(rec :: (k -&gt; *) -&gt; *) (spine :: k -&gt; *) -&gt;
+                spine (pat (withSpine rec))
+
+which reads like this: having 'withSpine' constructed for a particular 'k' and an n-ary pattern
+functor of kind @k -&gt; k@ we can get a 1-ary pattern functor of kind
+
+    ((k -&gt; *) -&gt; *) -&gt; (k -&gt; *) -&gt; *
+
+We derive various 'withSpine's automatically on the Haskell side from 'k' itself.
+
+Read next: Note [Generic fix].
+-}</span><span>
+</span><a name="line-207"></a><span>
+</span><a name="line-208"></a><span class="hs-comment">{- Note [Generic fix]
+Now that we know how to pack n-ary functors into 1-ary ones
+(see [Packing n-ary pattern functors semantically]), only a few tiny steps remain to get the generic
+
+    fix :: (k -&gt; k) -&gt; k
+
+from just
+
+    ifix :: ((i -&gt; *) -&gt; i -&gt; *) -&gt; i -&gt; *
+
+Having @pat :: k -&gt; k@ we can pack it as
+
+    toPat1 withSpine patN :: ((k -&gt; *) -&gt; *) -&gt; (k -&gt; *) -&gt; *
+
+(where 'withSpine' is constructed automatically from 'k' on the Haskell side) and we can apply
+'ifix' to this 1-ary pattern functor and get
+
+    ifix (toPat1 withSpine patN) :: (k -&gt; *) -&gt; *
+
+It only remains to turn something of kind @(k -&gt; *) -&gt; *@ into something of kind @*@, i.e. to define
+a type function of kind @((k -&gt; *) -&gt; *) -&gt; k@. But we already have such a function: 'withSpine',
+so the final encoding is
+
+    fix = \(patN :: k -&gt; k) -&gt; withSpine (ifix (toPat1 withSpine patN))
+
+The meaning of 'withSpine' here is the same as we've seen before: we use it to pack @n@ type
+arguments as a single CPS-encoded spine and pass it to some function.
+
+Summarizing, 'fix' receives an n-ary pattern functor and @n@ type arguments, the pattern functor
+gets packed as a 1-ary one, the type arguments get packed into a single CPS-encoded spine and
+'ifix' gets applied to the 1-ary pattern functor and the spine.
+
+Read next: Note [Encoded InterList].
+-}</span><span>
+</span><a name="line-242"></a><span>
+</span><a name="line-243"></a><span class="hs-comment">{- Note [Encoded InterList]
+Let's now look at an example.
+
+Recall that the pattern functor of 'interlist' is
+
+    interlistF =
+        \(interlist :: * -&gt; * -&gt; *) (a :: *) (b :: *) -&gt;
+            all (r :: *). r -&gt; (a -&gt; b -&gt; interlist b a -&gt; r) -&gt; r
+
+We can apply generic 'fix' (see Note [Generic fix]) to this pattern functor directly:
+
+    fix interlistF :: * -&gt; *
+
+which after eta-expansion and some reductions becomes
+
+    \(a :: *) -&gt; withSpine (ifix (toPat1 withSpine interlistF)) a
+
+(as per Note [Generic fix]) which after some more reductions becomes
+
+    -- Two type arguments that the data type receives and the 'ifix' primitive.
+    \(a :: *) (b -&gt; *) -&gt; ifix
+        -- The variable responsible for recursion and the variable representing a CPS-encoded spine
+        -- of two elements. Note that the kind of the argument that the variable responsible for
+        -- recursion receives is the same as the kind of 'spine', i.e. we always instantiate
+        -- recursion at some spine.
+        (\(rec :: ((* -&gt; * -&gt; *) -&gt; *) -&gt; *) -&gt; \(spine :: (* -&gt; * -&gt; *) -&gt; *) -&gt;
+            -- 'spine' unpacks a CPS-encoded spine and passes all its elements to a continuation.
+            spine
+              -- The 'interlistF' pattern functor given above applied to a function that receives
+              -- two type arguments, packs them as a CPS-encoded spine and passes the spine to the
+              -- variable responsible for recursion.
+              (interlistF (\(a :: *) (b :: *) -&gt; rec (\(dat :: * -&gt; * -&gt; *) -&gt; dat a b)))
+        )
+        -- The two type arguments packed as a CPS-encoded spine.
+        (\(dat :: * -&gt; * -&gt; *) -&gt; dat a b)
+
+We've elaborated the encoding on example, but there is a problem to consider here.
+Read next: Note [Denormalization]
+-}</span><span>
+</span><a name="line-282"></a><span>
+</span><a name="line-283"></a><span class="hs-comment">{- Note [Denormalization]
+Originally, we were binding 'withSpine' and 'patN' (taken from the end of
+Note [Packing n-ary functors]) on the Plutus Core side and this resulted in huge unreadable types
+being produced. Now we bind 'withSpine', 'patN' and what 'withSpine' receives on the Haskell side,
+i.e. we use Haskell lambdas to bind variables and regular function application to eliminate those
+lambdas which allows us to defer type reduction business to Haskell.
+Here is how the definition of 'list' looks like:
+
+    \(a :: *) -&gt; ifix
+        (\(rec :: ((* -&gt; *) -&gt; *) -&gt; *) -&gt; \(spine :: (* -&gt; *) -&gt; *) -&gt;
+            spine (listF (\(a :: *) -&gt; rec (\(dat :: * -&gt; *) -&gt; dat a)))
+        )
+        (\(dat :: * -&gt; *) -&gt; dat a)
+
+This is pretty readable (once you know how to read it, see Note [Encoded InterList] for a similar
+example) and doesn't contain any 'withSpine' or 'patN' variables, but if we inline 'listF', we'll get
+
+    (\(list :: * -&gt; *) -&gt; \(a :: *) -&gt; all (r :: *). r -&gt; (a -&gt; list a -&gt; r) -&gt; r)
+    (\(a :: *) -&gt; rec (\(dat :: * -&gt; *) -&gt; dat a))
+
+which is an applied lambda abstraction. This essentially means that in the pattern functor of 'list'
+
+    \(a :: *) -&gt; all (r :: *). r -&gt; (a -&gt; list a -&gt; r) -&gt; r
+
+'list' is defined as
+
+    \(a :: *) -&gt; rec (\(dat :: * -&gt; *) -&gt; dat a)
+
+This all is fine, that's how our encoding trick works, but note that we produced a type that is not
+in normal form. This is a bit worrying: the user writes something that looks like it's normalized,
+but in the end types are not normalized due to how the encoding works. In Plutus Core we have two
+modes for type checking:
+
+1. off-chain, type normalization is allowed
+2. on-chain, type normalization is not allowed and types must already be normalized
+
+Thus, we do care about whether types are normalized or not. In the compilation pipeline we just
+explicitly normalize types whenever normalized types are required, but since this module belongs
+to a library it better be general and not rely on particular details of downstream code.
+
+Preserving properties of user-written code is generally a good idea while transforming it,
+so we also do not want to remove redexes from user-written code and thus we can't just normalize
+everything in sight to overcome the denormalization problem.
+
+Then the question is whether it's possible to preserve redexes in user-written types and not to
+produce new ones while encoding the types. And the answer is &quot;yes, but it's too costly&quot;.
+
+But read Note [Spiney API] first.
+-}</span><span>
+</span><a name="line-332"></a><span>
+</span><a name="line-333"></a><span class="hs-comment">{- Note [Spiney API]
+Encoding of n-ary pattern functors into 1-ary pattern functors is hidden behind an API that pretends
+our types are in head-spine form. See @plutus/docs/fomega/deep-isorecursive/alternatives.md@ for
+details and discussion about the head-spine form approach.
+
+The reasons for providing such API are
+
+1. it's simple
+2. it hides all the gory details in such a way that we can change the representation of types and
+not change the API. For example, we can encode pattern functors in different ways (and we, in fact,
+do this) or we even can have the head-spine form in the AST and that wouldn't affect the API
+
+We could have an API like this: the user provides an n-ary pattern functor and we manipulate the AST
+directly which may or may not involve deconstruction of the AST depending on how we perform encoding.
+However the user might provide something that is not a pattern functor, but computes to a pattern
+functor and everything becomes more complicated. Instead, we require that the user provides the name
+of the data type being defined, a list of type variables (the ones that the pattern functor binds)
+along with their kinds and the body of the pattern functor separately. Having this information is
+enought to perform whatever encoding we want. Here is how it looks on the 'interlist' example:
+
+the n-ary pattern functor of 'interlist' is
+
+    \(interlist :: * -&gt; * -&gt; *) (a :: *) (b :: *) -&gt;
+        all (r :: *). r -&gt; (a -&gt; b -&gt; interlist b a -&gt; r) -&gt; r
+
+and we require the user (where &quot;the user&quot; means someone generating Plutus Core or writing it directly,
+i.e. either someone writing a compiler to Plutus Core or one of the creators of the language) to split
+this type into three components
+
+1. &quot;interlist&quot;         -- the name of the data type
+2. @[a :: *, b :: *]@  -- other type variables the pattern functors binds along with their kinds
+3. @all (r :: *). r -&gt; (a -&gt; b -&gt; interlist b a -&gt; r) -&gt; r@  -- the body of the pattern functor
+
+and pass them to the 'makeRecursiveType' function (which also receives an annotation as its first
+argument just so that we have something to place in the AST when needed). Note that we do not require
+to provide the kind of 'interlist', because we can compute it from the kinds of other type variables.
+
+The code constructing the data type itself:
+
+    -- Introduce names in scope.
+    [a, b, interlist, r] &lt;- traverse (freshTyName ()) [&quot;a&quot;, &quot;b&quot;, &quot;interlist&quot;, &quot;r&quot;]
+
+    -- Define some aliases.
+    let interlistBA = mkIterTyApp () (TyVar () interlist) [TyVar () b, TyVar () a]
+        nilElimTy   = TyVar () r
+        consElimTy  = mkIterTyFun () [TyVar () a, TyVar () b, interlistBA] $ TyVar () r)
+
+    -- Construct the actual data type.
+    makeRecursiveType () interlist [TyVarDecl () a $ Type (), TyVarDecl () b $ Type ()]
+        . TyForall () r (Type ())  -- all (r :: *).
+        . TyFun () nilElimTy       --     r -&gt;
+        . TyFun () consElimTy      --         (a -&gt; b -&gt; interlist b a -&gt; r) -&gt;
+        $ TyVar () r               --             r
+
+So for the user the interface this module provides is rather simple considering how much stuff is
+hidden behind it.
+
+Read next: Note [Packing n-ary pattern functors syntactically]
+-}</span><span>
+</span><a name="line-392"></a><span>
+</span><a name="line-393"></a><span class="hs-comment">{- Note [Packing n-ary pattern functors syntactically]
+Now that we know how the API looks like (see Note [Spiney API]), we can discuss a solution to
+the denormalization problem (see Note [Denormalization]).
+
+Recall (or see Note [Packing n-ary pattern functors semantically]) that if we pack the pattern
+functor of 'list'
+
+    listF = \(list :: * -&gt; *) (a :: *) -&gt; all (r :: *). r -&gt; (a -&gt; list a -&gt; r) -&gt; r
+
+semantically and normalize the result, we'll get
+
+    semListF =
+        \(rec :: ((* -&gt; *) -&gt; *) -&gt; *) -&gt; \(spine :: (* -&gt; *) -&gt; *) -&gt;
+            spine (\(a :: *) -&gt; all (r :: *). r -&gt; (a -&gt; rec (\(dat :: * -&gt; *) -&gt; dat a) -&gt; r) -&gt; r)
+
+The question is how to get the same without full-scale normalization.
+
+In this particular case it's easy: since we receive the body of 'listF' separately from the variables
+the leading lambdas bind, we can simply enclose the body of 'listF' like this:
+
+    \(rec :: ((* -&gt; *) -&gt; *) -&gt; *) -&gt; \(spine :: (* -&gt; *) -&gt; *) -&gt;
+                spine (\(a :: *) -&gt; &lt;body_of_listF&gt;)
+
+and replace each occurrence of @list a@ by
+
+    rec (\(dat :: * -&gt; *) -&gt; dat a)
+
+and that's all.
+
+The slightly tricky part is how exactly we perform the replacement: we need to traverse each sequence
+of consecutive function applications in the pattern functor, remember all encountered arguments and
+if the head of consecutive applications is 'list' then rename it to 'dat' (and freshen the unique of
+the variable, because it's easy and it's nice not to break the global uniqueness condition, but this
+is not too important), apply 'dat' to all the remembered arguments and enclose the result by
+
+    rec (\(dat :: * -&gt; *) -&gt; _)
+
+But that doesn't work in the general case. The user might write
+
+    app = \(f :: * -&gt; *) (a :: *) -&gt; f a
+    listF = \(list :: * -&gt; *) (a :: *) -&gt; all (r :: *). r -&gt; (a -&gt; app list a -&gt; r) -&gt; r
+
+i.e. a type containing a non-saturated 'list' and the outlined algorithm can't handle this case,
+because it always just restores all the arguments in a sequence of applications (which we have none
+in this example) while we need to generate the following:
+
+    semAppListF =
+        \(rec :: ((* -&gt; *) -&gt; *) -&gt; *) -&gt; \(spine :: (* -&gt; *) -&gt; *) -&gt;
+            let list = \(a :: *) -&gt; rec (\(dat :: * -&gt; *) -&gt; dat a)
+                in spine (\(a :: *) -&gt; all (r :: *). r -&gt; (a -&gt; app list a -&gt; r) -&gt; r)
+
+(where @let list = ... in ...@ is pseudosyntax introduced for readability)
+So if a recursive case is not saturated, we have to generate as many lambdas as there are missing
+arguments and prepend the lambdas to the encoding of the recursive case.
+
+This way we can preserve the user's redexes and not introduce additional ones.
+
+Read next: Note [Comparing approaches to pattern functor packing]
+-}</span><span>
+</span><a name="line-452"></a><span>
+</span><a name="line-453"></a><span class="hs-comment">{- Note [Comparing approaches to pattern functor packing]
+Packing n-ary pattern functors semantically (see Note [Packing n-ary pattern functors semantically]):
+Pros:
+    1. easy to get right. Kinds match? You're all set
+    2. does not require manual manipulations with syntax (which would be very error-prone)
+    3. does not evaluate redexes written by the user
+    4. pattern functors with more than one recursive case are smaller being encoded this way than
+       when everything is fully inlined (in the latter case the overhead is O(n) where 'n' is the
+       number of recursive occurrences in a pattern functor)
+Cons:
+    1. resulting types contain additional redexes. I.e. we can turn normalized types into
+       non-normalized ones
+    2. pattern functors with one recursive case are slightly bigger being encoded this way than
+       when everything is fully inlined
+
+Packing n-ary pattern functors syntactically (see Note [Packing n-ary pattern functors syntactically]):
+Pros:
+    1. neither introduces new redexes nor evaluates ones written by the user
+Cons:
+    1. super easy to get wrong. While implementing this approach, I got it wrong three times.
+       I'm still not sure it's sound
+    2. requires testing against the other way to encode n-ary pattern functors
+    3. requires manipulations with uniques which always look fine until you get an incomprehensible
+       error message after 82 generated test cases pass
+    4. pattern functors with more than one recursive case are bigger being encoded this way than
+       with the other approach (the overhead here is O(n) where 'n' is the number of recursive
+       occurrences in a pattern functor)
+    5. someone who generates Plutus Core does not care much about whether types are normalized,
+       because it's a pain and if you want normalized types, just normalize what you generated
+       in the end.
+
+Therefore, the costs of encoding n-ary pattern functors as 1-ary pattern functors in normal form
+are rather high while the benefits are minor, and thus we go with the semantic packing approach.
+-}</span><span>
+</span><a name="line-487"></a><span>
+</span><a name="line-488"></a><span class="hs-comment">-- | A recursive type packaged along with a specified 'Wrap' that allows to construct elements</span><span>
+</span><a name="line-489"></a><span class="hs-comment">-- of this type.</span><span>
+</span><a name="line-490"></a><span class="hs-keyword">data</span><span> </span><a name="RecursiveType"><a href="Language.PlutusCore.StdLib.Type.html#RecursiveType"><span class="hs-identifier">RecursiveType</span></a></a><span> </span><a name="local-6989586621679301368"><a href="#local-6989586621679301368"><span class="hs-identifier">ann</span></a></a><span> </span><span class="hs-glyph">=</span><span> </span><a name="RecursiveType"><a href="Language.PlutusCore.StdLib.Type.html#RecursiveType"><span class="hs-identifier">RecursiveType</span></a></a><span>
+</span><a name="line-491"></a><span>    </span><span class="hs-special">{</span><span> </span><a name="_recursiveType"><a href="Language.PlutusCore.StdLib.Type.html#_recursiveType"><span class="hs-identifier">_recursiveType</span></a></a><span> </span><span class="hs-glyph">::</span><span> </span><a href="Language.PlutusCore.Type.html#Type"><span class="hs-identifier hs-type">Type</span></a><span> </span><a href="Language.PlutusCore.Name.html#TyName"><span class="hs-identifier hs-type">TyName</span></a><span> </span><a href="#local-6989586621679301368"><span class="hs-identifier hs-type">ann</span></a><span>
+</span><a name="line-492"></a><span>    </span><span class="hs-special">,</span><span> </span><a name="_recursiveWrap"><a href="Language.PlutusCore.StdLib.Type.html#_recursiveWrap"><span class="hs-identifier">_recursiveWrap</span></a></a><span> </span><span class="hs-glyph">::</span><span> </span><span class="hs-special">[</span><a href="Language.PlutusCore.Type.html#Type"><span class="hs-identifier hs-type">Type</span></a><span> </span><a href="Language.PlutusCore.Name.html#TyName"><span class="hs-identifier hs-type">TyName</span></a><span> </span><a href="#local-6989586621679301368"><span class="hs-identifier hs-type">ann</span></a><span class="hs-special">]</span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><a href="Language.PlutusCore.Type.html#Term"><span class="hs-identifier hs-type">Term</span></a><span> </span><a href="Language.PlutusCore.Name.html#TyName"><span class="hs-identifier hs-type">TyName</span></a><span> </span><a href="Language.PlutusCore.Name.html#Name"><span class="hs-identifier hs-type">Name</span></a><span> </span><a href="#local-6989586621679301368"><span class="hs-identifier hs-type">ann</span></a><span> </span><span class="hs-glyph">-&gt;</span><span> </span><a href="Language.PlutusCore.Type.html#Term"><span class="hs-identifier hs-type">Term</span></a><span> </span><a href="Language.PlutusCore.Name.html#TyName"><span class="hs-identifier hs-type">TyName</span></a><span> </span><a href="Language.PlutusCore.Name.html#Name"><span class="hs-identifier hs-type">Name</span></a><span> </span><a href="#local-6989586621679301368"><span class="hs-identifier hs-type">ann</span></a><span>
+</span><a name="line-493"></a><span>    </span><span class="hs-special">}</span><span>
+</span><a name="line-494"></a><span>
+</span><a name="line-495"></a><span class="hs-comment">-- | This exception is thrown when @_recursiveWrap@ is applied to a spine the length of which</span><span>
+</span><a name="line-496"></a><span class="hs-comment">-- is not equal to the length of the spine that @_recursiveType@ contains.</span><span>
+</span><a name="line-497"></a><span class="hs-comment">-- This can only happen if someone writing/generating Plutus Core made a mistake.</span><span>
+</span><a name="line-498"></a><span class="hs-keyword">data</span><span> </span><a name="IndicesLengthsMismatchException"><a href="Language.PlutusCore.StdLib.Type.html#IndicesLengthsMismatchException"><span class="hs-identifier">IndicesLengthsMismatchException</span></a></a><span> </span><span class="hs-glyph">=</span><span> </span><a name="IndicesLengthsMismatchException"><a href="Language.PlutusCore.StdLib.Type.html#IndicesLengthsMismatchException"><span class="hs-identifier">IndicesLengthsMismatchException</span></a></a><span>
+</span><a name="line-499"></a><span>    </span><span class="hs-special">{</span><span> </span><a name="_indicesLengthsMismatchExceptionExpected"><a href="Language.PlutusCore.StdLib.Type.html#_indicesLengthsMismatchExceptionExpected"><span class="hs-identifier">_indicesLengthsMismatchExceptionExpected</span></a></a><span> </span><span class="hs-glyph">::</span><span> </span><span class="hs-identifier hs-type">Int</span><span>
+</span><a name="line-500"></a><span>    </span><span class="hs-special">,</span><span> </span><a name="_indicesLengthsMismatchExceptionActual"><a href="Language.PlutusCore.StdLib.Type.html#_indicesLengthsMismatchExceptionActual"><span class="hs-identifier">_indicesLengthsMismatchExceptionActual</span></a></a><span>   </span><span class="hs-glyph">::</span><span> </span><span class="hs-identifier hs-type">Int</span><span>
+</span><a name="line-501"></a><span>    </span><span class="hs-special">,</span><span> </span><a name="_indicesLengthsMismatchExceptionTyName"><a href="Language.PlutusCore.StdLib.Type.html#_indicesLengthsMismatchExceptionTyName"><span class="hs-identifier">_indicesLengthsMismatchExceptionTyName</span></a></a><span>   </span><span class="hs-glyph">::</span><span> </span><a href="Language.PlutusCore.Name.html#TyName"><span class="hs-identifier hs-type">TyName</span></a><span> </span><span class="hs-special">(</span><span class="hs-special">)</span><span>
+</span><a name="line-502"></a><span>    </span><span class="hs-special">}</span><span> </span><span class="hs-keyword">deriving</span><span> </span><span class="hs-special">(</span><span class="hs-identifier hs-type">Typeable</span><span class="hs-special">)</span><span>
+</span><a name="line-503"></a><span>
+</span><a name="line-504"></a><span class="hs-keyword">instance</span><span> </span><span class="hs-identifier hs-type">Show</span><span> </span><a href="Language.PlutusCore.StdLib.Type.html#IndicesLengthsMismatchException"><span class="hs-identifier hs-type">IndicesLengthsMismatchException</span></a><span> </span><span class="hs-keyword">where</span><span>
+</span><a name="line-505"></a><span>    </span><a name="local-8214565720323790000"><span class="hs-identifier">show</span></a><span> </span><span class="hs-special">(</span><a href="Language.PlutusCore.StdLib.Type.html#IndicesLengthsMismatchException"><span class="hs-identifier hs-var">IndicesLengthsMismatchException</span></a><span> </span><a name="local-6989586621679301369"><a href="#local-6989586621679301369"><span class="hs-identifier">expected</span></a></a><span> </span><a name="local-6989586621679301370"><a href="#local-6989586621679301370"><span class="hs-identifier">actual</span></a></a><span> </span><a name="local-6989586621679301371"><a href="#local-6989586621679301371"><span class="hs-identifier">tyName</span></a></a><span class="hs-special">)</span><span> </span><span class="hs-glyph">=</span><span> </span><span class="hs-identifier hs-var">concat</span><span>
+</span><a name="line-506"></a><span>        </span><span class="hs-special">[</span><span> </span><span class="hs-string">&quot;Wrong number of elements\n&quot;</span><span>
+</span><a name="line-507"></a><span>        </span><span class="hs-special">,</span><span> </span><span class="hs-string">&quot;expected: &quot;</span><span class="hs-special">,</span><span> </span><span class="hs-identifier hs-var">show</span><span> </span><a href="#local-6989586621679301369"><span class="hs-identifier hs-var">expected</span></a><span class="hs-special">,</span><span> </span><span class="hs-string">&quot; , actual: &quot;</span><span class="hs-special">,</span><span> </span><span class="hs-identifier hs-var">show</span><span> </span><a href="#local-6989586621679301370"><span class="hs-identifier hs-var">actual</span></a><span class="hs-special">,</span><span> </span><span class="hs-string">&quot;\n&quot;</span><span>
+</span><a name="line-508"></a><span>        </span><span class="hs-special">,</span><span> </span><span class="hs-string">&quot;while constructing a &quot;</span><span class="hs-special">,</span><span> </span><a href="Language.PlutusCore.Pretty.html#prettyPlcDefString"><span class="hs-identifier hs-var">prettyPlcDefString</span></a><span> </span><a href="#local-6989586621679301371"><span class="hs-identifier hs-var">tyName</span></a><span>
+</span><a name="line-509"></a><span>        </span><span class="hs-special">]</span><span>
+</span><a name="line-510"></a><span>
+</span><a name="line-511"></a><span class="hs-keyword">instance</span><span> </span><span class="hs-identifier hs-type">Exception</span><span> </span><a href="Language.PlutusCore.StdLib.Type.html#IndicesLengthsMismatchException"><span class="hs-identifier hs-type">IndicesLengthsMismatchException</span></a><span>
+</span><a name="line-512"></a><span>
+</span><a name="line-513"></a><span class="hs-comment">-- | Get the kind of a data type having the kinds of its arguments.</span><span>
+</span><a name="line-514"></a><span class="hs-comment">--</span><span>
+</span><a name="line-515"></a><span class="hs-comment">-- &gt; argKindsToDataKindN _ [k1, k2 ... kn] = k1 -&gt; k2 -&gt; ... -&gt; kn -&gt; *</span><span>
+</span><a name="line-516"></a><span class="hs-identifier">argKindsToDataKindN</span><span> </span><span class="hs-glyph">::</span><span> </span><a href="#local-6989586621679301381"><span class="hs-identifier hs-type">ann</span></a><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="hs-special">[</span><a href="Language.PlutusCore.Type.html#Kind"><span class="hs-identifier hs-type">Kind</span></a><span> </span><a href="#local-6989586621679301381"><span class="hs-identifier hs-type">ann</span></a><span class="hs-special">]</span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><a href="Language.PlutusCore.Type.html#Kind"><span class="hs-identifier hs-type">Kind</span></a><span> </span><a href="#local-6989586621679301381"><span class="hs-identifier hs-type">ann</span></a><span>
+</span><a name="line-517"></a><a name="argKindsToDataKindN"><a href="Language.PlutusCore.StdLib.Type.html#argKindsToDataKindN"><span class="hs-identifier">argKindsToDataKindN</span></a></a><span> </span><a name="local-6989586621679301382"><a href="#local-6989586621679301382"><span class="hs-identifier">ann</span></a></a><span> </span><a name="local-6989586621679301383"><a href="#local-6989586621679301383"><span class="hs-identifier">argKinds</span></a></a><span> </span><span class="hs-glyph">=</span><span> </span><a href="Language.PlutusCore.MkPlc.html#mkIterKindArrow"><span class="hs-identifier hs-var">mkIterKindArrow</span></a><span> </span><a href="#local-6989586621679301382"><span class="hs-identifier hs-var">ann</span></a><span> </span><a href="#local-6989586621679301383"><span class="hs-identifier hs-var">argKinds</span></a><span> </span><span class="hs-operator hs-var">$</span><span> </span><a href="Language.PlutusCore.Type.html#Type"><span class="hs-identifier hs-var">Type</span></a><span> </span><a href="#local-6989586621679301382"><span class="hs-identifier hs-var">ann</span></a><span>
+</span><a name="line-518"></a><span>
+</span><a name="line-519"></a><span class="hs-comment">-- | Get the kind of @spine@ having the kind of a data type.</span><span>
+</span><a name="line-520"></a><span class="hs-comment">--</span><span>
+</span><a name="line-521"></a><span class="hs-comment">-- &gt; dataKindToSpineKind _ datKind = datKind -&gt; *</span><span>
+</span><a name="line-522"></a><span class="hs-identifier">dataKindToSpineKind</span><span> </span><span class="hs-glyph">::</span><span> </span><a href="#local-6989586621679301380"><span class="hs-identifier hs-type">ann</span></a><span> </span><span class="hs-glyph">-&gt;</span><span> </span><a href="Language.PlutusCore.Type.html#Kind"><span class="hs-identifier hs-type">Kind</span></a><span> </span><a href="#local-6989586621679301380"><span class="hs-identifier hs-type">ann</span></a><span> </span><span class="hs-glyph">-&gt;</span><span> </span><a href="Language.PlutusCore.Type.html#Kind"><span class="hs-identifier hs-type">Kind</span></a><span> </span><a href="#local-6989586621679301380"><span class="hs-identifier hs-type">ann</span></a><span>
+</span><a name="line-523"></a><a name="dataKindToSpineKind"><a href="Language.PlutusCore.StdLib.Type.html#dataKindToSpineKind"><span class="hs-identifier">dataKindToSpineKind</span></a></a><span> </span><a name="local-6989586621679301384"><a href="#local-6989586621679301384"><span class="hs-identifier">ann</span></a></a><span> </span><a name="local-6989586621679301385"><a href="#local-6989586621679301385"><span class="hs-identifier">dataKind</span></a></a><span> </span><span class="hs-glyph">=</span><span> </span><a href="Language.PlutusCore.Type.html#KindArrow"><span class="hs-identifier hs-var">KindArrow</span></a><span> </span><a href="#local-6989586621679301384"><span class="hs-identifier hs-var">ann</span></a><span> </span><a href="#local-6989586621679301385"><span class="hs-identifier hs-var">dataKind</span></a><span> </span><span class="hs-operator hs-var">$</span><span> </span><a href="Language.PlutusCore.Type.html#Type"><span class="hs-identifier hs-var">Type</span></a><span> </span><a href="#local-6989586621679301384"><span class="hs-identifier hs-var">ann</span></a><span>
+</span><a name="line-524"></a><span>
+</span><a name="line-525"></a><span class="hs-comment">-- | Get the kind of @rec@ having the kind of @spine@.</span><span>
+</span><a name="line-526"></a><span class="hs-comment">--</span><span>
+</span><a name="line-527"></a><span class="hs-comment">-- &gt; spineKindToRecKind _ spineKind = spineKind -&gt; *</span><span>
+</span><a name="line-528"></a><span class="hs-identifier">spineKindToRecKind</span><span> </span><span class="hs-glyph">::</span><span> </span><a href="#local-6989586621679301379"><span class="hs-identifier hs-type">ann</span></a><span> </span><span class="hs-glyph">-&gt;</span><span> </span><a href="Language.PlutusCore.Type.html#Kind"><span class="hs-identifier hs-type">Kind</span></a><span> </span><a href="#local-6989586621679301379"><span class="hs-identifier hs-type">ann</span></a><span> </span><span class="hs-glyph">-&gt;</span><span> </span><a href="Language.PlutusCore.Type.html#Kind"><span class="hs-identifier hs-type">Kind</span></a><span> </span><a href="#local-6989586621679301379"><span class="hs-identifier hs-type">ann</span></a><span>
+</span><a name="line-529"></a><a name="spineKindToRecKind"><a href="Language.PlutusCore.StdLib.Type.html#spineKindToRecKind"><span class="hs-identifier">spineKindToRecKind</span></a></a><span> </span><a name="local-6989586621679301386"><a href="#local-6989586621679301386"><span class="hs-identifier">ann</span></a></a><span> </span><a name="local-6989586621679301387"><a href="#local-6989586621679301387"><span class="hs-identifier">spineKind</span></a></a><span> </span><span class="hs-glyph">=</span><span> </span><a href="Language.PlutusCore.Type.html#KindArrow"><span class="hs-identifier hs-var">KindArrow</span></a><span> </span><a href="#local-6989586621679301386"><span class="hs-identifier hs-var">ann</span></a><span> </span><a href="#local-6989586621679301387"><span class="hs-identifier hs-var">spineKind</span></a><span> </span><span class="hs-operator hs-var">$</span><span> </span><a href="Language.PlutusCore.Type.html#Type"><span class="hs-identifier hs-var">Type</span></a><span> </span><a href="#local-6989586621679301386"><span class="hs-identifier hs-var">ann</span></a><span>
+</span><a name="line-530"></a><span>
+</span><a name="line-531"></a><span class="hs-comment">-- | Make a function that packs a list of 'TyDecl's as a spine using the CPS trick.</span><span>
+</span><a name="line-532"></a><span class="hs-comment">--</span><span>
+</span><a name="line-533"></a><span class="hs-comment">-- &gt; getToSpine _ =</span><span>
+</span><a name="line-534"></a><span class="hs-comment">-- &gt;     \[a1 :: k1, a2 :: k2 ... an :: kn] -&gt; (on :: k1 -&gt; k2 -&gt; ... kn -&gt; *) -&gt; on a1 a2 ... an</span><span>
+</span><a name="line-535"></a><span class="hs-comment">--</span><span>
+</span><a name="line-536"></a><span class="hs-comment">-- For example,</span><span>
+</span><a name="line-537"></a><span class="hs-comment">--</span><span>
+</span><a name="line-538"></a><span class="hs-comment">-- &gt; getToSpine _ =</span><span>
+</span><a name="line-539"></a><span class="hs-comment">-- &gt;     \[a1 :: k1, a2 :: k2] -&gt; (on :: k1 -&gt; k2 -&gt; *) -&gt; on a1 a2</span><span>
+</span><a name="line-540"></a><span class="hs-identifier">getToSpine</span><span> </span><span class="hs-glyph">::</span><span> </span><a href="#local-6989586621679301378"><span class="hs-identifier hs-type">ann</span></a><span> </span><span class="hs-glyph">-&gt;</span><span> </span><a href="Language.PlutusCore.Quote.html#Quote"><span class="hs-identifier hs-type">Quote</span></a><span> </span><span class="hs-special">(</span><span class="hs-special">[</span><a href="Language.PlutusCore.MkPlc.html#TyDecl"><span class="hs-identifier hs-type">TyDecl</span></a><span> </span><a href="Language.PlutusCore.Name.html#TyName"><span class="hs-identifier hs-type">TyName</span></a><span> </span><a href="#local-6989586621679301378"><span class="hs-identifier hs-type">ann</span></a><span class="hs-special">]</span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><a href="Language.PlutusCore.Type.html#Type"><span class="hs-identifier hs-type">Type</span></a><span> </span><a href="Language.PlutusCore.Name.html#TyName"><span class="hs-identifier hs-type">TyName</span></a><span> </span><a href="#local-6989586621679301378"><span class="hs-identifier hs-type">ann</span></a><span class="hs-special">)</span><span>
+</span><a name="line-541"></a><a name="getToSpine"><a href="Language.PlutusCore.StdLib.Type.html#getToSpine"><span class="hs-identifier">getToSpine</span></a></a><span> </span><a name="local-6989586621679301388"><a href="#local-6989586621679301388"><span class="hs-identifier">ann</span></a></a><span> </span><span class="hs-glyph">=</span><span> </span><span class="hs-keyword">do</span><span>
+</span><a name="line-542"></a><span>    </span><a name="local-6989586621679301389"><a href="#local-6989586621679301389"><span class="hs-identifier">dat</span></a></a><span> </span><span class="hs-glyph">&lt;-</span><span> </span><a href="Language.PlutusCore.Quote.html#freshTyName"><span class="hs-identifier hs-var">freshTyName</span></a><span> </span><a href="#local-6989586621679301388"><span class="hs-identifier hs-var">ann</span></a><span> </span><span class="hs-string">&quot;dat&quot;</span><span>
+</span><a name="line-543"></a><span>
+</span><a name="line-544"></a><span>    </span><span class="hs-identifier hs-var">return</span><span> </span><span class="hs-operator hs-var">$</span><span> </span><span class="hs-glyph">\</span><a name="local-6989586621679301390"><a href="#local-6989586621679301390"><span class="hs-identifier">args</span></a></a><span> </span><span class="hs-glyph">-&gt;</span><span>
+</span><a name="line-545"></a><span>          </span><a href="Language.PlutusCore.Type.html#TyLam"><span class="hs-identifier hs-var">TyLam</span></a><span> </span><a href="#local-6989586621679301388"><span class="hs-identifier hs-var">ann</span></a><span> </span><a href="#local-6989586621679301389"><span class="hs-identifier hs-var">dat</span></a><span> </span><span class="hs-special">(</span><a href="Language.PlutusCore.StdLib.Type.html#argKindsToDataKindN"><span class="hs-identifier hs-var">argKindsToDataKindN</span></a><span> </span><a href="#local-6989586621679301388"><span class="hs-identifier hs-var">ann</span></a><span> </span><span class="hs-operator hs-var">$</span><span> </span><span class="hs-identifier hs-var">map</span><span> </span><span class="hs-identifier">tyDeclKind</span><span> </span><a href="#local-6989586621679301390"><span class="hs-identifier hs-var">args</span></a><span class="hs-special">)</span><span>
+</span><a name="line-546"></a><span>        </span><span class="hs-operator hs-var">.</span><span> </span><a href="Language.PlutusCore.MkPlc.html#mkIterTyApp"><span class="hs-identifier hs-var">mkIterTyApp</span></a><span> </span><a href="#local-6989586621679301388"><span class="hs-identifier hs-var">ann</span></a><span> </span><span class="hs-special">(</span><a href="Language.PlutusCore.Type.html#TyVar"><span class="hs-identifier hs-var">TyVar</span></a><span> </span><a href="#local-6989586621679301388"><span class="hs-identifier hs-var">ann</span></a><span> </span><a href="#local-6989586621679301389"><span class="hs-identifier hs-var">dat</span></a><span class="hs-special">)</span><span>
+</span><a name="line-547"></a><span>        </span><span class="hs-operator hs-var">$</span><span> </span><span class="hs-identifier hs-var">map</span><span> </span><span class="hs-identifier">tyDeclType</span><span> </span><a href="#local-6989586621679301390"><span class="hs-identifier hs-var">args</span></a><span>
+</span><a name="line-548"></a><span>
+</span><a name="line-549"></a><span class="hs-comment">-- | Pack a list of 'TyDecl's as a spine using the CPS trick.</span><span>
+</span><a name="line-550"></a><span class="hs-comment">--</span><span>
+</span><a name="line-551"></a><span class="hs-comment">-- &gt; getSpine _ [a1 :: k1, a2 :: k2 ... an :: kn] =</span><span>
+</span><a name="line-552"></a><span class="hs-comment">-- &gt;     \(on :: k1 -&gt; k2 -&gt; ... kn -&gt; *) -&gt; on a1 a2 ... an</span><span>
+</span><a name="line-553"></a><span class="hs-comment">--</span><span>
+</span><a name="line-554"></a><span class="hs-comment">-- For example,</span><span>
+</span><a name="line-555"></a><span class="hs-comment">--</span><span>
+</span><a name="line-556"></a><span class="hs-comment">-- &gt; getSpine _ [a1 :: k1, a2 :: k2] =</span><span>
+</span><a name="line-557"></a><span class="hs-comment">-- &gt;     \(on :: k1 -&gt; k2 -&gt; *) -&gt; on a1 a2</span><span>
+</span><a name="line-558"></a><span class="hs-identifier">getSpine</span><span> </span><span class="hs-glyph">::</span><span> </span><a href="#local-6989586621679301377"><span class="hs-identifier hs-type">ann</span></a><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="hs-special">[</span><a href="Language.PlutusCore.MkPlc.html#TyDecl"><span class="hs-identifier hs-type">TyDecl</span></a><span> </span><a href="Language.PlutusCore.Name.html#TyName"><span class="hs-identifier hs-type">TyName</span></a><span> </span><a href="#local-6989586621679301377"><span class="hs-identifier hs-type">ann</span></a><span class="hs-special">]</span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><a href="Language.PlutusCore.Quote.html#Quote"><span class="hs-identifier hs-type">Quote</span></a><span> </span><span class="hs-special">(</span><a href="Language.PlutusCore.Type.html#Type"><span class="hs-identifier hs-type">Type</span></a><span> </span><a href="Language.PlutusCore.Name.html#TyName"><span class="hs-identifier hs-type">TyName</span></a><span> </span><a href="#local-6989586621679301377"><span class="hs-identifier hs-type">ann</span></a><span class="hs-special">)</span><span>
+</span><a name="line-559"></a><a name="getSpine"><a href="Language.PlutusCore.StdLib.Type.html#getSpine"><span class="hs-identifier">getSpine</span></a></a><span> </span><a name="local-6989586621679301391"><a href="#local-6989586621679301391"><span class="hs-identifier">ann</span></a></a><span> </span><a name="local-6989586621679301392"><a href="#local-6989586621679301392"><span class="hs-identifier">args</span></a></a><span> </span><span class="hs-glyph">=</span><span> </span><span class="hs-special">(</span><span class="hs-operator hs-var">$</span><span> </span><a href="#local-6989586621679301392"><span class="hs-identifier hs-var">args</span></a><span class="hs-special">)</span><span> </span><span class="hs-operator hs-var">&lt;$&gt;</span><span> </span><a href="Language.PlutusCore.StdLib.Type.html#getToSpine"><span class="hs-identifier hs-var">getToSpine</span></a><span> </span><a href="#local-6989586621679301391"><span class="hs-identifier hs-var">ann</span></a><span>
+</span><a name="line-560"></a><span>
+</span><a name="line-561"></a><span class="hs-comment">-- See Note [Packing n-ary pattern functors semantically].</span><span>
+</span><a name="line-562"></a><span class="hs-comment">-- | Having a list of type variables along with their kinds, make a function that receives</span><span>
+</span><a name="line-563"></a><span class="hs-comment">--</span><span>
+</span><a name="line-564"></a><span class="hs-comment">-- 1. a function expecting a spine in CPS form</span><span>
+</span><a name="line-565"></a><span class="hs-comment">-- 2. a sequence of types</span><span>
+</span><a name="line-566"></a><span class="hs-comment">--</span><span>
+</span><a name="line-567"></a><span class="hs-comment">-- packs the types into a CPS-encoded spine and passes the spine to the function.</span><span>
+</span><a name="line-568"></a><span class="hs-comment">--</span><span>
+</span><a name="line-569"></a><span class="hs-comment">-- &gt; getWithSpine [v1 :: k1, v2 :: k2 ... vn :: kn] =</span><span>
+</span><a name="line-570"></a><span class="hs-comment">-- &gt;     \(cont :: ((k1 -&gt; k2 -&gt; ... -&gt; kn -&gt; *) -&gt; *) -&gt; *)</span><span>
+</span><a name="line-571"></a><span class="hs-comment">-- &gt;      (v1 :: k1) (v2 :: k2) ... (vn :: kn) -&gt;</span><span>
+</span><a name="line-572"></a><span class="hs-comment">-- &gt;          cont \(on :: k1 -&gt; k2 -&gt; ... kn -&gt; *) -&gt; on v1 v2 ... vn</span><span>
+</span><a name="line-573"></a><span class="hs-comment">--</span><span>
+</span><a name="line-574"></a><span class="hs-comment">-- For example,</span><span>
+</span><a name="line-575"></a><span class="hs-comment">--</span><span>
+</span><a name="line-576"></a><span class="hs-comment">-- &gt; getWithSpine [v1 :: k1, v2 :: k2] =</span><span>
+</span><a name="line-577"></a><span class="hs-comment">-- &gt;     \(cont : ((k1 -&gt; k2 -&gt; *) -&gt; *) -&gt; *) (v1 :: k1) (v2 :: k2) -&gt;</span><span>
+</span><a name="line-578"></a><span class="hs-comment">-- &gt;          cont \(on :: k1 -&gt; k2 -&gt; *) -&gt; on v1 v2</span><span>
+</span><a name="line-579"></a><span class="hs-identifier">getWithSpine</span><span>
+</span><a name="line-580"></a><span>    </span><span class="hs-glyph">::</span><span> </span><a href="#local-6989586621679301376"><span class="hs-identifier hs-type">ann</span></a><span>
+</span><a name="line-581"></a><span>    </span><span class="hs-glyph">-&gt;</span><span> </span><span class="hs-special">[</span><a href="Language.PlutusCore.MkPlc.html#TyVarDecl"><span class="hs-identifier hs-type">TyVarDecl</span></a><span> </span><a href="Language.PlutusCore.Name.html#TyName"><span class="hs-identifier hs-type">TyName</span></a><span> </span><a href="#local-6989586621679301376"><span class="hs-identifier hs-type">ann</span></a><span class="hs-special">]</span><span>
+</span><a name="line-582"></a><span>    </span><span class="hs-glyph">-&gt;</span><span> </span><a href="Language.PlutusCore.Quote.html#Quote"><span class="hs-identifier hs-type">Quote</span></a><span> </span><span class="hs-special">(</span><span class="hs-special">(</span><a href="Language.PlutusCore.Type.html#Type"><span class="hs-identifier hs-type">Type</span></a><span> </span><a href="Language.PlutusCore.Name.html#TyName"><span class="hs-identifier hs-type">TyName</span></a><span> </span><a href="#local-6989586621679301376"><span class="hs-identifier hs-type">ann</span></a><span> </span><span class="hs-glyph">-&gt;</span><span> </span><a href="Language.PlutusCore.Type.html#Type"><span class="hs-identifier hs-type">Type</span></a><span> </span><a href="Language.PlutusCore.Name.html#TyName"><span class="hs-identifier hs-type">TyName</span></a><span> </span><a href="#local-6989586621679301376"><span class="hs-identifier hs-type">ann</span></a><span class="hs-special">)</span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><a href="Language.PlutusCore.Type.html#Type"><span class="hs-identifier hs-type">Type</span></a><span> </span><a href="Language.PlutusCore.Name.html#TyName"><span class="hs-identifier hs-type">TyName</span></a><span> </span><a href="#local-6989586621679301376"><span class="hs-identifier hs-type">ann</span></a><span class="hs-special">)</span><span>
+</span><a name="line-583"></a><a name="getWithSpine"><a href="Language.PlutusCore.StdLib.Type.html#getWithSpine"><span class="hs-identifier">getWithSpine</span></a></a><span> </span><a name="local-6989586621679301393"><a href="#local-6989586621679301393"><span class="hs-identifier">ann</span></a></a><span> </span><a name="local-6989586621679301394"><a href="#local-6989586621679301394"><span class="hs-identifier">argVars</span></a></a><span> </span><span class="hs-glyph">=</span><span> </span><span class="hs-keyword">do</span><span>
+</span><a name="line-584"></a><span>    </span><a name="local-6989586621679301395"><a href="#local-6989586621679301395"><span class="hs-identifier">spine</span></a></a><span> </span><span class="hs-glyph">&lt;-</span><span> </span><a href="Language.PlutusCore.StdLib.Type.html#getSpine"><span class="hs-identifier hs-var">getSpine</span></a><span> </span><a href="#local-6989586621679301393"><span class="hs-identifier hs-var">ann</span></a><span> </span><span class="hs-operator hs-var">$</span><span> </span><span class="hs-identifier hs-var">map</span><span> </span><a href="Language.PlutusCore.MkPlc.html#tyDeclVar"><span class="hs-identifier hs-var">tyDeclVar</span></a><span> </span><a href="#local-6989586621679301394"><span class="hs-identifier hs-var">argVars</span></a><span>
+</span><a name="line-585"></a><span>    </span><span class="hs-identifier hs-var">return</span><span> </span><span class="hs-operator hs-var">$</span><span> </span><span class="hs-glyph">\</span><a name="local-6989586621679301396"><a href="#local-6989586621679301396"><span class="hs-identifier">k</span></a></a><span> </span><span class="hs-glyph">-&gt;</span><span> </span><a href="Language.PlutusCore.MkPlc.html#mkIterTyLam"><span class="hs-identifier hs-var">mkIterTyLam</span></a><span> </span><a href="#local-6989586621679301394"><span class="hs-identifier hs-var">argVars</span></a><span> </span><span class="hs-operator hs-var">$</span><span> </span><a href="#local-6989586621679301396"><span class="hs-identifier hs-var">k</span></a><span> </span><a href="#local-6989586621679301395"><span class="hs-identifier hs-var">spine</span></a><span>
+</span><a name="line-586"></a><span>
+</span><a name="line-587"></a><span class="hs-comment">-- See Note [Spiney API].</span><span>
+</span><a name="line-588"></a><span class="hs-keyword">type</span><span> </span><a name="FromDataPieces"><a href="Language.PlutusCore.StdLib.Type.html#FromDataPieces"><span class="hs-identifier">FromDataPieces</span></a></a><span> </span><a name="local-6989586621679301366"><a href="#local-6989586621679301366"><span class="hs-identifier">ann</span></a></a><span> </span><a name="local-6989586621679301367"><a href="#local-6989586621679301367"><span class="hs-identifier">a</span></a></a><span>
+</span><a name="line-589"></a><span>    </span><span class="hs-glyph">=</span><span>  </span><a href="#local-6989586621679301366"><span class="hs-identifier hs-type">ann</span></a><span>                     </span><span class="hs-comment">-- ^ An annotation placed everywhere we do not have annotations.</span><span>
+</span><a name="line-590"></a><span>    </span><span class="hs-glyph">-&gt;</span><span> </span><a href="Language.PlutusCore.Name.html#TyName"><span class="hs-identifier hs-type">TyName</span></a><span> </span><a href="#local-6989586621679301366"><span class="hs-identifier hs-type">ann</span></a><span>              </span><span class="hs-comment">-- ^ The name of the data type being defined.</span><span>
+</span><a name="line-591"></a><span>    </span><span class="hs-glyph">-&gt;</span><span> </span><span class="hs-special">[</span><a href="Language.PlutusCore.MkPlc.html#TyVarDecl"><span class="hs-identifier hs-type">TyVarDecl</span></a><span> </span><a href="Language.PlutusCore.Name.html#TyName"><span class="hs-identifier hs-type">TyName</span></a><span> </span><a href="#local-6989586621679301366"><span class="hs-identifier hs-type">ann</span></a><span class="hs-special">]</span><span>  </span><span class="hs-comment">-- ^ A list of @n@ type variables bound in a pattern functor.</span><span>
+</span><a name="line-592"></a><span>    </span><span class="hs-glyph">-&gt;</span><span> </span><a href="Language.PlutusCore.Type.html#Type"><span class="hs-identifier hs-type">Type</span></a><span> </span><a href="Language.PlutusCore.Name.html#TyName"><span class="hs-identifier hs-type">TyName</span></a><span> </span><a href="#local-6989586621679301366"><span class="hs-identifier hs-type">ann</span></a><span>         </span><span class="hs-comment">-- ^ The body of the n-ary pattern functor.</span><span>
+</span><a name="line-593"></a><span>    </span><span class="hs-glyph">-&gt;</span><span> </span><a href="Language.PlutusCore.Quote.html#Quote"><span class="hs-identifier hs-type">Quote</span></a><span> </span><a href="#local-6989586621679301367"><span class="hs-identifier hs-type">a</span></a><span>
+</span><a name="line-594"></a><span>
+</span><a name="line-595"></a><span class="hs-comment">-- See Note [Packing n-ary pattern functors semantically].</span><span>
+</span><a name="line-596"></a><span class="hs-comment">-- | Pack the body of an n-ary pattern functor and make the corresponding 1-ary pattern functor.</span><span>
+</span><a name="line-597"></a><span class="hs-comment">--</span><span>
+</span><a name="line-598"></a><span class="hs-comment">-- &gt; packPatternFunctorBodyN ann dataName [v1 :: k1, v2 :: k2 ... vn :: kn] patBodyN =</span><span>
+</span><a name="line-599"></a><span class="hs-comment">-- &gt;     let patN = \(dataName :: k1 -&gt; k2 -&gt; ... -&gt; kn -&gt; *) (v1 :: k1) (v2 :: k2) ... (vn :: kn) -&gt;</span><span>
+</span><a name="line-600"></a><span class="hs-comment">-- &gt;                     patBodyN</span><span>
+</span><a name="line-601"></a><span class="hs-comment">-- &gt;         in \(rec :: ((k1 -&gt; k2 -&gt; ... kn -&gt; *) -&gt; *) -&gt; *)</span><span>
+</span><a name="line-602"></a><span class="hs-comment">-- &gt;             (spine :: (k1 -&gt; k2 -&gt; ... -&gt; kn -&gt; *) -&gt; *) -&gt;</span><span>
+</span><a name="line-603"></a><span class="hs-comment">-- &gt;                 spine (patN (withSpine rec))</span><span>
+</span><a name="line-604"></a><span class="hs-comment">--</span><span>
+</span><a name="line-605"></a><span class="hs-comment">-- For example,</span><span>
+</span><a name="line-606"></a><span class="hs-comment">--</span><span>
+</span><a name="line-607"></a><span class="hs-comment">-- &gt; packPatternFunctorBodyN ann dataName [v1 :: k1, v2 :: k2] patBodyN =</span><span>
+</span><a name="line-608"></a><span class="hs-comment">-- &gt;     let patN = \(dataName :: k1 -&gt; k2 -&gt; *) (v1 :: k1) (v2 :: k2) -&gt;</span><span>
+</span><a name="line-609"></a><span class="hs-comment">-- &gt;                     patBodyN</span><span>
+</span><a name="line-610"></a><span class="hs-comment">-- &gt;         in \(rec :: ((k1 -&gt; k2 -&gt; *) -&gt; *) -&gt; *)</span><span>
+</span><a name="line-611"></a><span class="hs-comment">-- &gt;             (spine :: (k1 -&gt; k2 -&gt; *) -&gt; *) -&gt;</span><span>
+</span><a name="line-612"></a><span class="hs-comment">-- &gt;                 spine (patN (withSpine rec))</span><span>
+</span><a name="line-613"></a><span class="hs-identifier">packPatternFunctorBodyN</span><span> </span><span class="hs-glyph">::</span><span> </span><a href="Language.PlutusCore.StdLib.Type.html#FromDataPieces"><span class="hs-identifier hs-type">FromDataPieces</span></a><span> </span><a href="#local-6989586621679301375"><span class="hs-identifier hs-type">ann</span></a><span> </span><span class="hs-special">(</span><a href="Language.PlutusCore.Type.html#Type"><span class="hs-identifier hs-type">Type</span></a><span> </span><a href="Language.PlutusCore.Name.html#TyName"><span class="hs-identifier hs-type">TyName</span></a><span> </span><a href="#local-6989586621679301375"><span class="hs-identifier hs-type">ann</span></a><span class="hs-special">)</span><span>
+</span><a name="line-614"></a><a name="packPatternFunctorBodyN"><a href="Language.PlutusCore.StdLib.Type.html#packPatternFunctorBodyN"><span class="hs-identifier">packPatternFunctorBodyN</span></a></a><span> </span><a name="local-6989586621679301397"><a href="#local-6989586621679301397"><span class="hs-identifier">ann</span></a></a><span> </span><a name="local-6989586621679301398"><a href="#local-6989586621679301398"><span class="hs-identifier">dataName</span></a></a><span> </span><a name="local-6989586621679301399"><a href="#local-6989586621679301399"><span class="hs-identifier">argVars</span></a></a><span> </span><a name="local-6989586621679301400"><a href="#local-6989586621679301400"><span class="hs-identifier">patBodyN</span></a></a><span> </span><span class="hs-glyph">=</span><span> </span><span class="hs-keyword">do</span><span>
+</span><a name="line-615"></a><span>    </span><span class="hs-keyword">let</span><span> </span><a name="local-6989586621679301401"><a href="#local-6989586621679301401"><span class="hs-identifier">dataKind</span></a></a><span>  </span><span class="hs-glyph">=</span><span> </span><a href="Language.PlutusCore.StdLib.Type.html#argKindsToDataKindN"><span class="hs-identifier hs-var">argKindsToDataKindN</span></a><span> </span><a href="#local-6989586621679301397"><span class="hs-identifier hs-var">ann</span></a><span> </span><span class="hs-operator hs-var">$</span><span> </span><span class="hs-identifier hs-var">map</span><span> </span><span class="hs-identifier">tyVarDeclKind</span><span> </span><a href="#local-6989586621679301399"><span class="hs-identifier hs-var">argVars</span></a><span>
+</span><a name="line-616"></a><span>        </span><a name="local-6989586621679301402"><a href="#local-6989586621679301402"><span class="hs-identifier">spineKind</span></a></a><span> </span><span class="hs-glyph">=</span><span> </span><a href="Language.PlutusCore.StdLib.Type.html#dataKindToSpineKind"><span class="hs-identifier hs-var">dataKindToSpineKind</span></a><span> </span><a href="#local-6989586621679301397"><span class="hs-identifier hs-var">ann</span></a><span> </span><a href="#local-6989586621679301401"><span class="hs-identifier hs-var">dataKind</span></a><span>
+</span><a name="line-617"></a><span>        </span><a name="local-6989586621679301403"><a href="#local-6989586621679301403"><span class="hs-identifier">recKind</span></a></a><span>   </span><span class="hs-glyph">=</span><span> </span><a href="Language.PlutusCore.StdLib.Type.html#spineKindToRecKind"><span class="hs-identifier hs-var">spineKindToRecKind</span></a><span>  </span><a href="#local-6989586621679301397"><span class="hs-identifier hs-var">ann</span></a><span> </span><a href="#local-6989586621679301402"><span class="hs-identifier hs-var">spineKind</span></a><span>
+</span><a name="line-618"></a><span>        </span><a name="local-6989586621679301404"><a href="#local-6989586621679301404"><span class="hs-identifier">vDat</span></a></a><span> </span><span class="hs-glyph">=</span><span> </span><a href="Language.PlutusCore.MkPlc.html#TyVarDecl"><span class="hs-identifier hs-var">TyVarDecl</span></a><span> </span><a href="#local-6989586621679301397"><span class="hs-identifier hs-var">ann</span></a><span> </span><a href="#local-6989586621679301398"><span class="hs-identifier hs-var">dataName</span></a><span> </span><a href="#local-6989586621679301401"><span class="hs-identifier hs-var">dataKind</span></a><span>
+</span><a name="line-619"></a><span>        </span><a name="local-6989586621679301405"><a href="#local-6989586621679301405"><span class="hs-identifier">patN</span></a></a><span> </span><span class="hs-glyph">=</span><span> </span><a href="Language.PlutusCore.MkPlc.html#mkIterTyLam"><span class="hs-identifier hs-var">mkIterTyLam</span></a><span> </span><span class="hs-special">(</span><a href="#local-6989586621679301404"><span class="hs-identifier hs-var">vDat</span></a><span> </span><span class="hs-glyph">:</span><span> </span><a href="#local-6989586621679301399"><span class="hs-identifier hs-var">argVars</span></a><span class="hs-special">)</span><span> </span><a href="#local-6989586621679301400"><span class="hs-identifier hs-var">patBodyN</span></a><span>
+</span><a name="line-620"></a><span>
+</span><a name="line-621"></a><span>    </span><a name="local-6989586621679301406"><a href="#local-6989586621679301406"><span class="hs-identifier">withSpine</span></a></a><span> </span><span class="hs-glyph">&lt;-</span><span> </span><a href="Language.PlutusCore.StdLib.Type.html#getWithSpine"><span class="hs-identifier hs-var">getWithSpine</span></a><span> </span><a href="#local-6989586621679301397"><span class="hs-identifier hs-var">ann</span></a><span> </span><a href="#local-6989586621679301399"><span class="hs-identifier hs-var">argVars</span></a><span>
+</span><a name="line-622"></a><span>
+</span><a name="line-623"></a><span>    </span><a name="local-6989586621679301407"><a href="#local-6989586621679301407"><span class="hs-identifier">rec</span></a></a><span>   </span><span class="hs-glyph">&lt;-</span><span> </span><a href="Language.PlutusCore.Quote.html#freshTyName"><span class="hs-identifier hs-var">freshTyName</span></a><span> </span><a href="#local-6989586621679301397"><span class="hs-identifier hs-var">ann</span></a><span> </span><span class="hs-string">&quot;rec&quot;</span><span>
+</span><a name="line-624"></a><span>    </span><a name="local-6989586621679301408"><a href="#local-6989586621679301408"><span class="hs-identifier">spine</span></a></a><span> </span><span class="hs-glyph">&lt;-</span><span> </span><a href="Language.PlutusCore.Quote.html#freshTyName"><span class="hs-identifier hs-var">freshTyName</span></a><span> </span><a href="#local-6989586621679301397"><span class="hs-identifier hs-var">ann</span></a><span> </span><span class="hs-string">&quot;spine&quot;</span><span>
+</span><a name="line-625"></a><span>
+</span><a name="line-626"></a><span>    </span><span class="hs-identifier hs-var">return</span><span>
+</span><a name="line-627"></a><span>        </span><span class="hs-operator hs-var">.</span><span> </span><a href="Language.PlutusCore.Type.html#TyLam"><span class="hs-identifier hs-var">TyLam</span></a><span> </span><a href="#local-6989586621679301397"><span class="hs-identifier hs-var">ann</span></a><span> </span><a href="#local-6989586621679301407"><span class="hs-identifier hs-var">rec</span></a><span> </span><a href="#local-6989586621679301403"><span class="hs-identifier hs-var">recKind</span></a><span>
+</span><a name="line-628"></a><span>        </span><span class="hs-operator hs-var">.</span><span> </span><a href="Language.PlutusCore.Type.html#TyLam"><span class="hs-identifier hs-var">TyLam</span></a><span> </span><a href="#local-6989586621679301397"><span class="hs-identifier hs-var">ann</span></a><span> </span><a href="#local-6989586621679301408"><span class="hs-identifier hs-var">spine</span></a><span> </span><a href="#local-6989586621679301402"><span class="hs-identifier hs-var">spineKind</span></a><span>
+</span><a name="line-629"></a><span>        </span><span class="hs-operator hs-var">.</span><span> </span><a href="Language.PlutusCore.Type.html#TyApp"><span class="hs-identifier hs-var">TyApp</span></a><span> </span><a href="#local-6989586621679301397"><span class="hs-identifier hs-var">ann</span></a><span> </span><span class="hs-special">(</span><a href="Language.PlutusCore.Type.html#TyVar"><span class="hs-identifier hs-var">TyVar</span></a><span> </span><a href="#local-6989586621679301397"><span class="hs-identifier hs-var">ann</span></a><span> </span><a href="#local-6989586621679301408"><span class="hs-identifier hs-var">spine</span></a><span class="hs-special">)</span><span>
+</span><a name="line-630"></a><span>        </span><span class="hs-operator hs-var">.</span><span> </span><a href="Language.PlutusCore.Type.html#TyApp"><span class="hs-identifier hs-var">TyApp</span></a><span> </span><a href="#local-6989586621679301397"><span class="hs-identifier hs-var">ann</span></a><span> </span><a href="#local-6989586621679301405"><span class="hs-identifier hs-var">patN</span></a><span>
+</span><a name="line-631"></a><span>        </span><span class="hs-operator hs-var">.</span><span> </span><a href="#local-6989586621679301406"><span class="hs-identifier hs-var">withSpine</span></a><span>
+</span><a name="line-632"></a><span>        </span><span class="hs-operator hs-var">.</span><span> </span><a href="Language.PlutusCore.Type.html#TyApp"><span class="hs-identifier hs-var">TyApp</span></a><span> </span><a href="#local-6989586621679301397"><span class="hs-identifier hs-var">ann</span></a><span>
+</span><a name="line-633"></a><span>        </span><span class="hs-operator hs-var">$</span><span> </span><a href="Language.PlutusCore.Type.html#TyVar"><span class="hs-identifier hs-var">TyVar</span></a><span> </span><a href="#local-6989586621679301397"><span class="hs-identifier hs-var">ann</span></a><span> </span><a href="#local-6989586621679301407"><span class="hs-identifier hs-var">rec</span></a><span>
+</span><a name="line-634"></a><span>
+</span><a name="line-635"></a><span class="hs-comment">-- | Construct a data type out of pieces.</span><span>
+</span><a name="line-636"></a><span class="hs-identifier">getTyFix</span><span> </span><span class="hs-glyph">::</span><span> </span><a href="Language.PlutusCore.StdLib.Type.html#FromDataPieces"><span class="hs-identifier hs-type">FromDataPieces</span></a><span> </span><a href="#local-6989586621679301374"><span class="hs-identifier hs-type">ann</span></a><span> </span><span class="hs-special">(</span><a href="Language.PlutusCore.Type.html#Type"><span class="hs-identifier hs-type">Type</span></a><span> </span><a href="Language.PlutusCore.Name.html#TyName"><span class="hs-identifier hs-type">TyName</span></a><span> </span><a href="#local-6989586621679301374"><span class="hs-identifier hs-type">ann</span></a><span class="hs-special">)</span><span>
+</span><a name="line-637"></a><a name="getTyFix"><a href="Language.PlutusCore.StdLib.Type.html#getTyFix"><span class="hs-identifier">getTyFix</span></a></a><span> </span><a name="local-6989586621679301409"><a href="#local-6989586621679301409"><span class="hs-identifier">ann</span></a></a><span> </span><a name="local-6989586621679301410"><a href="#local-6989586621679301410"><span class="hs-identifier">name</span></a></a><span> </span><a name="local-6989586621679301411"><a href="#local-6989586621679301411"><span class="hs-identifier">argVars</span></a></a><span> </span><a name="local-6989586621679301412"><a href="#local-6989586621679301412"><span class="hs-identifier">patBodyN</span></a></a><span> </span><span class="hs-glyph">=</span><span> </span><span class="hs-keyword">do</span><span>
+</span><a name="line-638"></a><span>    </span><a name="local-6989586621679301413"><a href="#local-6989586621679301413"><span class="hs-identifier">withSpine</span></a></a><span> </span><span class="hs-glyph">&lt;-</span><span> </span><a href="Language.PlutusCore.StdLib.Type.html#getWithSpine"><span class="hs-identifier hs-var">getWithSpine</span></a><span> </span><a href="#local-6989586621679301409"><span class="hs-identifier hs-var">ann</span></a><span> </span><a href="#local-6989586621679301411"><span class="hs-identifier hs-var">argVars</span></a><span>
+</span><a name="line-639"></a><span>    </span><a href="#local-6989586621679301413"><span class="hs-identifier hs-var">withSpine</span></a><span> </span><span class="hs-operator hs-var">.</span><span> </span><a href="Language.PlutusCore.Type.html#TyIFix"><span class="hs-identifier hs-var">TyIFix</span></a><span> </span><a href="#local-6989586621679301409"><span class="hs-identifier hs-var">ann</span></a><span> </span><span class="hs-operator hs-var">&lt;$&gt;</span><span> </span><a href="Language.PlutusCore.StdLib.Type.html#packPatternFunctorBodyN"><span class="hs-identifier hs-var">packPatternFunctorBodyN</span></a><span> </span><a href="#local-6989586621679301409"><span class="hs-identifier hs-var">ann</span></a><span> </span><a href="#local-6989586621679301410"><span class="hs-identifier hs-var">name</span></a><span> </span><a href="#local-6989586621679301411"><span class="hs-identifier hs-var">argVars</span></a><span> </span><a href="#local-6989586621679301412"><span class="hs-identifier hs-var">patBodyN</span></a><span>
+</span><a name="line-640"></a><span>
+</span><a name="line-641"></a><span class="hs-comment">-- | Make a generic @wrap@ that takes a spine of type arguments and the rest of a term, packs</span><span>
+</span><a name="line-642"></a><span class="hs-comment">-- the spine using the CPS trick and passes the spine and the term to 'IWrap' along with a 1-ary</span><span>
+</span><a name="line-643"></a><span class="hs-comment">-- pattern functor constructed from pieces of a data type passed as arguments to 'getWrap'.</span><span>
+</span><a name="line-644"></a><span class="hs-identifier">getWrap</span><span> </span><span class="hs-glyph">::</span><span> </span><a href="Language.PlutusCore.StdLib.Type.html#FromDataPieces"><span class="hs-identifier hs-type">FromDataPieces</span></a><span> </span><a href="#local-6989586621679301373"><span class="hs-identifier hs-type">ann</span></a><span> </span><span class="hs-special">(</span><span class="hs-special">[</span><a href="Language.PlutusCore.Type.html#Type"><span class="hs-identifier hs-type">Type</span></a><span> </span><a href="Language.PlutusCore.Name.html#TyName"><span class="hs-identifier hs-type">TyName</span></a><span> </span><a href="#local-6989586621679301373"><span class="hs-identifier hs-type">ann</span></a><span class="hs-special">]</span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><a href="Language.PlutusCore.Type.html#Term"><span class="hs-identifier hs-type">Term</span></a><span> </span><a href="Language.PlutusCore.Name.html#TyName"><span class="hs-identifier hs-type">TyName</span></a><span> </span><a href="Language.PlutusCore.Name.html#Name"><span class="hs-identifier hs-type">Name</span></a><span> </span><a href="#local-6989586621679301373"><span class="hs-identifier hs-type">ann</span></a><span> </span><span class="hs-glyph">-&gt;</span><span> </span><a href="Language.PlutusCore.Type.html#Term"><span class="hs-identifier hs-type">Term</span></a><span> </span><a href="Language.PlutusCore.Name.html#TyName"><span class="hs-identifier hs-type">TyName</span></a><span> </span><a href="Language.PlutusCore.Name.html#Name"><span class="hs-identifier hs-type">Name</span></a><span> </span><a href="#local-6989586621679301373"><span class="hs-identifier hs-type">ann</span></a><span class="hs-special">)</span><span>
+</span><a name="line-645"></a><a name="getWrap"><a href="Language.PlutusCore.StdLib.Type.html#getWrap"><span class="hs-identifier">getWrap</span></a></a><span> </span><a name="local-6989586621679301414"><a href="#local-6989586621679301414"><span class="hs-identifier">ann</span></a></a><span> </span><a name="local-6989586621679301415"><a href="#local-6989586621679301415"><span class="hs-identifier">name</span></a></a><span> </span><a name="local-6989586621679301416"><a href="#local-6989586621679301416"><span class="hs-identifier">argVars</span></a></a><span> </span><a name="local-6989586621679301417"><a href="#local-6989586621679301417"><span class="hs-identifier">patBody</span></a></a><span> </span><span class="hs-glyph">=</span><span> </span><span class="hs-keyword">do</span><span>
+</span><a name="line-646"></a><span>    </span><a name="local-6989586621679301418"><a href="#local-6989586621679301418"><span class="hs-identifier">pat1</span></a></a><span> </span><span class="hs-glyph">&lt;-</span><span> </span><a href="Language.PlutusCore.StdLib.Type.html#packPatternFunctorBodyN"><span class="hs-identifier hs-var">packPatternFunctorBodyN</span></a><span> </span><a href="#local-6989586621679301414"><span class="hs-identifier hs-var">ann</span></a><span> </span><a href="#local-6989586621679301415"><span class="hs-identifier hs-var">name</span></a><span> </span><a href="#local-6989586621679301416"><span class="hs-identifier hs-var">argVars</span></a><span> </span><a href="#local-6989586621679301417"><span class="hs-identifier hs-var">patBody</span></a><span>
+</span><a name="line-647"></a><span>    </span><a name="local-6989586621679301419"><a href="#local-6989586621679301419"><span class="hs-identifier">toSpine</span></a></a><span> </span><span class="hs-glyph">&lt;-</span><span> </span><a href="Language.PlutusCore.StdLib.Type.html#getToSpine"><span class="hs-identifier hs-var">getToSpine</span></a><span> </span><a href="#local-6989586621679301414"><span class="hs-identifier hs-var">ann</span></a><span>
+</span><a name="line-648"></a><span>    </span><span class="hs-keyword">let</span><span> </span><a name="local-6989586621679301420"><a href="#local-6989586621679301420"><span class="hs-identifier">instVar</span></a></a><span> </span><a name="local-6989586621679301421"><a href="#local-6989586621679301421"><span class="hs-identifier">var</span></a></a><span> </span><a name="local-6989586621679301422"><a href="#local-6989586621679301422"><span class="hs-identifier">ty</span></a></a><span> </span><span class="hs-glyph">=</span><span> </span><a href="Language.PlutusCore.MkPlc.html#TyDecl"><span class="hs-identifier hs-var">TyDecl</span></a><span> </span><a href="#local-6989586621679301414"><span class="hs-identifier hs-var">ann</span></a><span> </span><a href="#local-6989586621679301422"><span class="hs-identifier hs-var">ty</span></a><span> </span><span class="hs-operator hs-var">$</span><span> </span><span class="hs-identifier">tyVarDeclKind</span><span> </span><a href="#local-6989586621679301421"><span class="hs-identifier hs-var">var</span></a><span>
+</span><a name="line-649"></a><span>    </span><span class="hs-identifier hs-var">return</span><span> </span><span class="hs-operator hs-var">$</span><span> </span><span class="hs-glyph">\</span><a name="local-6989586621679301423"><a href="#local-6989586621679301423"><span class="hs-identifier">args</span></a></a><span> </span><span class="hs-glyph">-&gt;</span><span>
+</span><a name="line-650"></a><span>        </span><span class="hs-keyword">let</span><span> </span><a name="local-6989586621679301424"><a href="#local-6989586621679301424"><span class="hs-identifier">argVarsLen</span></a></a><span> </span><span class="hs-glyph">=</span><span> </span><span class="hs-identifier hs-var">length</span><span> </span><a href="#local-6989586621679301416"><span class="hs-identifier hs-var">argVars</span></a><span>
+</span><a name="line-651"></a><span>            </span><a name="local-6989586621679301425"><a href="#local-6989586621679301425"><span class="hs-identifier">argsLen</span></a></a><span> </span><span class="hs-glyph">=</span><span> </span><span class="hs-identifier hs-var">length</span><span> </span><a href="#local-6989586621679301423"><span class="hs-identifier hs-var">args</span></a><span>
+</span><a name="line-652"></a><span>            </span><span class="hs-keyword">in</span><span> </span><span class="hs-keyword">if</span><span> </span><a href="#local-6989586621679301424"><span class="hs-identifier hs-var">argVarsLen</span></a><span> </span><span class="hs-operator hs-var">==</span><span> </span><a href="#local-6989586621679301425"><span class="hs-identifier hs-var">argsLen</span></a><span>
+</span><a name="line-653"></a><span>                </span><span class="hs-keyword">then</span><span> </span><a href="Language.PlutusCore.Type.html#IWrap"><span class="hs-identifier hs-var">IWrap</span></a><span> </span><a href="#local-6989586621679301414"><span class="hs-identifier hs-var">ann</span></a><span> </span><a href="#local-6989586621679301418"><span class="hs-identifier hs-var">pat1</span></a><span> </span><span class="hs-operator hs-var">.</span><span> </span><a href="#local-6989586621679301419"><span class="hs-identifier hs-var">toSpine</span></a><span> </span><span class="hs-operator hs-var">$</span><span> </span><span class="hs-identifier hs-var">zipWith</span><span> </span><a href="#local-6989586621679301420"><span class="hs-identifier hs-var">instVar</span></a><span> </span><a href="#local-6989586621679301416"><span class="hs-identifier hs-var">argVars</span></a><span> </span><a href="#local-6989586621679301423"><span class="hs-identifier hs-var">args</span></a><span>
+</span><a name="line-654"></a><span>                </span><span class="hs-keyword">else</span><span> </span><span class="hs-identifier hs-var">throw</span><span> </span><span class="hs-operator hs-var">.</span><span> </span><a href="Language.PlutusCore.StdLib.Type.html#IndicesLengthsMismatchException"><span class="hs-identifier hs-var">IndicesLengthsMismatchException</span></a><span> </span><a href="#local-6989586621679301424"><span class="hs-identifier hs-var">argVarsLen</span></a><span> </span><a href="#local-6989586621679301425"><span class="hs-identifier hs-var">argsLen</span></a><span> </span><span class="hs-operator hs-var">$</span><span> </span><span class="hs-identifier hs-var">void</span><span> </span><a href="#local-6989586621679301415"><span class="hs-identifier hs-var">name</span></a><span>
+</span><a name="line-655"></a><span>
+</span><a name="line-656"></a><span class="hs-comment">-- See all the Notes above.</span><span>
+</span><a name="line-657"></a><span class="hs-comment">-- | Construct a 'RecursiveType' by encoding an n-ary pattern functor as the corresponding 1-ary one</span><span>
+</span><a name="line-658"></a><span class="hs-comment">-- and passing it to 'TyIFix' and 'IWrap'. @n@ type arguments get packaged together as a CPS-encoded</span><span>
+</span><a name="line-659"></a><span class="hs-comment">-- spine.</span><span>
+</span><a name="line-660"></a><span class="hs-identifier">makeRecursiveType</span><span> </span><span class="hs-glyph">::</span><span> </span><a href="Language.PlutusCore.StdLib.Type.html#FromDataPieces"><span class="hs-identifier hs-type">FromDataPieces</span></a><span> </span><a href="#local-6989586621679301372"><span class="hs-identifier hs-type">ann</span></a><span> </span><span class="hs-special">(</span><a href="Language.PlutusCore.StdLib.Type.html#RecursiveType"><span class="hs-identifier hs-type">RecursiveType</span></a><span> </span><a href="#local-6989586621679301372"><span class="hs-identifier hs-type">ann</span></a><span class="hs-special">)</span><span>
+</span><a name="line-661"></a><a name="makeRecursiveType"><a href="Language.PlutusCore.StdLib.Type.html#makeRecursiveType"><span class="hs-identifier">makeRecursiveType</span></a></a><span> </span><a name="local-6989586621679301426"><a href="#local-6989586621679301426"><span class="hs-identifier">ann</span></a></a><span> </span><a name="local-6989586621679301427"><a href="#local-6989586621679301427"><span class="hs-identifier">name</span></a></a><span> </span><a name="local-6989586621679301428"><a href="#local-6989586621679301428"><span class="hs-identifier">argVars</span></a></a><span> </span><a name="local-6989586621679301429"><a href="#local-6989586621679301429"><span class="hs-identifier">patBody</span></a></a><span> </span><span class="hs-glyph">=</span><span>
+</span><a name="line-662"></a><span>    </span><a href="Language.PlutusCore.StdLib.Type.html#RecursiveType"><span class="hs-identifier hs-var">RecursiveType</span></a><span> </span><span class="hs-operator hs-var">&lt;$&gt;</span><span> </span><a href="Language.PlutusCore.StdLib.Type.html#getTyFix"><span class="hs-identifier hs-var">getTyFix</span></a><span> </span><a href="#local-6989586621679301426"><span class="hs-identifier hs-var">ann</span></a><span> </span><a href="#local-6989586621679301427"><span class="hs-identifier hs-var">name</span></a><span> </span><a href="#local-6989586621679301428"><span class="hs-identifier hs-var">argVars</span></a><span> </span><a href="#local-6989586621679301429"><span class="hs-identifier hs-var">patBody</span></a><span> </span><span class="hs-operator hs-var">&lt;*&gt;</span><span> </span><a href="Language.PlutusCore.StdLib.Type.html#getWrap"><span class="hs-identifier hs-var">getWrap</span></a><span> </span><a href="#local-6989586621679301426"><span class="hs-identifier hs-var">ann</span></a><span> </span><a href="#local-6989586621679301427"><span class="hs-identifier hs-var">name</span></a><span> </span><a href="#local-6989586621679301428"><span class="hs-identifier hs-var">argVars</span></a><span> </span><a href="#local-6989586621679301429"><span class="hs-identifier hs-var">patBody</span></a><span>
+</span><a name="line-663"></a></pre></body></html>

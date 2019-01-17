@@ -1,0 +1,100 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html xmlns="http://www.w3.org/1999/xhtml"><head><link rel="stylesheet" type="text/css" href="style.css" /><script type="text/javascript" src="highlight.js"></script></head><body><pre><span class="hs-pragma">{-# LANGUAGE ConstraintKinds   #-}</span><span>
+</span><a name="line-2"></a><span class="hs-pragma">{-# LANGUAGE FlexibleContexts  #-}</span><span>
+</span><a name="line-3"></a><span class="hs-pragma">{-# LANGUAGE LambdaCase        #-}</span><span>
+</span><a name="line-4"></a><span class="hs-pragma">{-# LANGUAGE OverloadedStrings #-}</span><span>
+</span><a name="line-5"></a><span>
+</span><a name="line-6"></a><span class="hs-comment">-- | Functions for dealing with the Plutus Core value restriction.</span><span>
+</span><a name="line-7"></a><span class="hs-keyword">module</span><span> </span><span class="hs-identifier">Language.PlutusTx.Compiler.ValueRestriction</span><span> </span><span class="hs-keyword">where</span><span>
+</span><a name="line-8"></a><span>
+</span><a name="line-9"></a><span class="hs-keyword">import</span><span>           </span><a href="Language.PlutusTx.Compiler.Error.html"><span class="hs-identifier">Language.PlutusTx.Compiler.Error</span></a><span>
+</span><a name="line-10"></a><span class="hs-keyword">import</span><span>           </span><a href="Language.PlutusTx.Compiler.Laziness.html"><span class="hs-identifier">Language.PlutusTx.Compiler.Laziness</span></a><span>
+</span><a name="line-11"></a><span class="hs-keyword">import</span><span>           </span><a href="Language.PlutusTx.Compiler.Types.html"><span class="hs-identifier">Language.PlutusTx.Compiler.Types</span></a><span>
+</span><a name="line-12"></a><span class="hs-keyword">import</span><span>           </span><a href="Language.PlutusTx.PIRTypes.html"><span class="hs-identifier">Language.PlutusTx.PIRTypes</span></a><span>
+</span><a name="line-13"></a><span>
+</span><a name="line-14"></a><span class="hs-keyword">import</span><span> </span><span class="hs-keyword">qualified</span><span> </span><span class="hs-identifier">Language.PlutusIR</span><span>                   </span><span class="hs-keyword">as</span><span> </span><span class="hs-identifier">PIR</span><span>
+</span><a name="line-15"></a><span class="hs-keyword">import</span><span> </span><span class="hs-keyword">qualified</span><span> </span><span class="hs-identifier">Language.PlutusIR.Value</span><span>             </span><span class="hs-keyword">as</span><span> </span><span class="hs-identifier">PIR</span><span>
+</span><a name="line-16"></a><span>
+</span><a name="line-17"></a><span class="hs-keyword">import</span><span>           </span><span class="hs-identifier">Control.Monad.Reader</span><span>
+</span><a name="line-18"></a><span>
+</span><a name="line-19"></a><span class="hs-comment">-- Value restriction</span><span>
+</span><a name="line-20"></a><span>
+</span><a name="line-21"></a><span class="hs-comment">{- Note [Value restriction]
+Plutus Core has the traditional *value restriction* on type abstractions - namely, the
+body of a type abstraction must be a value.
+
+This causes problems for us because *Haskell* has no such thing. (There is the monomorphism
+restriciton, which is similar, but not as restrictive, so it doesn't help us.)
+
+There are two approaches to solving this problem. Currently we use &quot;passing on the value restriction&quot;,
+but I include a description of mangling to illustrate why the current solution is preferable.
+
+-- Mangling
+
+We can get around this by delaying the body of all our abstractions, thus making them lambdas, which are values.
+This then means that we need to change the *types* of all foralls to include the unit argument,
+and all instantiations to force the value.
+
+We need to do this everywhere so that the translation of the users' program remains
+well-typed. Consider
+
+runST :: (forall s. ST s a) -&gt; a
+
+myCalc :: Int
+myCalc = runST $ pure 1
+
+Converting `pure 1`, we would normally turn it into something of type
+
+(all s (type) [ST s Int])
+
+After mangling, this becomes
+
+(all s (type) (fun unit [ST s Int]))
+
+This means we had better convert `runST` into something that expects things of that type instead of
+the original type! And we need to add forces to the instantiations inside `runST` otherwise its
+body won't be well-typed too.
+
+Note that it's no good to convert some other abstraction where the body is already a value without the delay -
+if we did that, then `runST` would be in an impossible place, since it would need to take
+either mangled or non-mangled abstractions. The only way we can get away with this without doing complicated
+accounting is to do it uniformly: i.e. absolutely everywhere whether we need it in that
+case or not.
+
+We need to do this even for the abstractions in our generated matchers for Scott-encoding,
+because constructors are user-visible and so can be passed to functions, which might expect them to be
+mangled.
+
+-- Passing on the value restriction
+
+An alternative approach would be to pass on the value restriction to the client Haskell code.
+This has the advantage of much simpler codegen. However, it has a few annoying cases:
+
+- We can't provide `error :: forall a. a` any more.
+- We can't handle `void# :: forall a. a` well any more.
+
+The first is easy: we just make the primitive be mangled `error :: forall a. () -&gt; a`.
+
+The second is a pain. GHC *does* use the polymorphic void. So we take the ad-hoc
+expedient of mangling *just* the 'Void#' type. Since nothing can use this &quot;for real&quot;,
+there are no uses to go wrong so long as we change the type uniformly. This is a
+bit of a hack, though.
+-}</span><span>
+</span><a name="line-82"></a><span>
+</span><a name="line-83"></a><span class="hs-comment">-- See Note [Value restriction]</span><span>
+</span><a name="line-84"></a><span class="hs-identifier">mangleTyForall</span><span> </span><span class="hs-glyph">::</span><span> </span><a href="Language.PlutusTx.Compiler.Types.html#Converting"><span class="hs-identifier hs-type">Converting</span></a><span> </span><a href="#local-6989586621679215152"><span class="hs-identifier hs-type">m</span></a><span> </span><span class="hs-glyph">=&gt;</span><span> </span><a href="Language.PlutusTx.PIRTypes.html#PIRType"><span class="hs-identifier hs-type">PIRType</span></a><span> </span><span class="hs-glyph">-&gt;</span><span> </span><a href="#local-6989586621679215152"><span class="hs-identifier hs-type">m</span></a><span> </span><a href="Language.PlutusTx.PIRTypes.html#PIRType"><span class="hs-identifier hs-type">PIRType</span></a><span>
+</span><a name="line-85"></a><a name="mangleTyForall"><a href="Language.PlutusTx.Compiler.ValueRestriction.html#mangleTyForall"><span class="hs-identifier">mangleTyForall</span></a></a><span> </span><span class="hs-glyph">=</span><span> </span><span class="hs-glyph">\</span><span class="hs-glyph">case</span><span>
+</span><a name="line-86"></a><span>    </span><span class="hs-identifier hs-var">PIR.TyForall</span><span> </span><a name="local-6989586621679215153"><a href="#local-6989586621679215153"><span class="hs-identifier">a</span></a></a><span> </span><a name="local-6989586621679215154"><a href="#local-6989586621679215154"><span class="hs-identifier">t</span></a></a><span> </span><a name="local-6989586621679215155"><a href="#local-6989586621679215155"><span class="hs-identifier">k</span></a></a><span> </span><a name="local-6989586621679215156"><a href="#local-6989586621679215156"><span class="hs-identifier">body</span></a></a><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="hs-identifier hs-var">PIR.TyForall</span><span> </span><a href="#local-6989586621679215153"><span class="hs-identifier hs-var">a</span></a><span> </span><a href="#local-6989586621679215154"><span class="hs-identifier hs-var">t</span></a><span> </span><a href="#local-6989586621679215155"><span class="hs-identifier hs-var">k</span></a><span> </span><span class="hs-operator hs-var">&lt;$&gt;</span><span> </span><a href="Language.PlutusTx.Compiler.Laziness.html#delayType"><span class="hs-identifier hs-var">delayType</span></a><span> </span><a href="#local-6989586621679215156"><span class="hs-identifier hs-var">body</span></a><span>
+</span><a name="line-87"></a><span>    </span><a name="local-6989586621679215157"><a href="#local-6989586621679215157"><span class="hs-identifier">x</span></a></a><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="hs-identifier hs-var">pure</span><span> </span><a href="#local-6989586621679215157"><span class="hs-identifier hs-var">x</span></a><span>
+</span><a name="line-88"></a><span>
+</span><a name="line-89"></a><span class="hs-comment">-- See Note [Value restriction]</span><span>
+</span><a name="line-90"></a><span class="hs-identifier">mangleTyAbs</span><span> </span><span class="hs-glyph">::</span><span> </span><a href="Language.PlutusTx.Compiler.Types.html#Converting"><span class="hs-identifier hs-type">Converting</span></a><span> </span><a href="#local-6989586621679215151"><span class="hs-identifier hs-type">m</span></a><span> </span><span class="hs-glyph">=&gt;</span><span> </span><a href="Language.PlutusTx.PIRTypes.html#PIRTerm"><span class="hs-identifier hs-type">PIRTerm</span></a><span> </span><span class="hs-glyph">-&gt;</span><span> </span><a href="#local-6989586621679215151"><span class="hs-identifier hs-type">m</span></a><span> </span><a href="Language.PlutusTx.PIRTypes.html#PIRTerm"><span class="hs-identifier hs-type">PIRTerm</span></a><span>
+</span><a name="line-91"></a><a name="mangleTyAbs"><a href="Language.PlutusTx.Compiler.ValueRestriction.html#mangleTyAbs"><span class="hs-identifier">mangleTyAbs</span></a></a><span> </span><span class="hs-glyph">=</span><span> </span><span class="hs-glyph">\</span><span class="hs-glyph">case</span><span>
+</span><a name="line-92"></a><span>    </span><span class="hs-identifier hs-var">PIR.TyAbs</span><span> </span><a name="local-6989586621679215158"><a href="#local-6989586621679215158"><span class="hs-identifier">a</span></a></a><span> </span><a name="local-6989586621679215159"><a href="#local-6989586621679215159"><span class="hs-identifier">t</span></a></a><span> </span><a name="local-6989586621679215160"><a href="#local-6989586621679215160"><span class="hs-identifier">k</span></a></a><span> </span><a name="local-6989586621679215161"><a href="#local-6989586621679215161"><span class="hs-identifier">body</span></a></a><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="hs-identifier hs-var">PIR.TyAbs</span><span> </span><a href="#local-6989586621679215158"><span class="hs-identifier hs-var">a</span></a><span> </span><a href="#local-6989586621679215159"><span class="hs-identifier hs-var">t</span></a><span> </span><a href="#local-6989586621679215160"><span class="hs-identifier hs-var">k</span></a><span> </span><span class="hs-operator hs-var">&lt;$&gt;</span><span> </span><a href="Language.PlutusTx.Compiler.Laziness.html#delay"><span class="hs-identifier hs-var">delay</span></a><span> </span><a href="#local-6989586621679215161"><span class="hs-identifier hs-var">body</span></a><span>
+</span><a name="line-93"></a><span>    </span><a name="local-6989586621679215162"><a href="#local-6989586621679215162"><span class="hs-identifier">x</span></a></a><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="hs-identifier hs-var">pure</span><span> </span><a href="#local-6989586621679215162"><span class="hs-identifier hs-var">x</span></a><span>
+</span><a name="line-94"></a><span>
+</span><a name="line-95"></a><span class="hs-identifier">checkTyAbsBody</span><span> </span><span class="hs-glyph">::</span><span> </span><a href="Language.PlutusTx.Compiler.Types.html#Converting"><span class="hs-identifier hs-type">Converting</span></a><span> </span><a href="#local-6989586621679215150"><span class="hs-identifier hs-type">m</span></a><span> </span><span class="hs-glyph">=&gt;</span><span> </span><a href="Language.PlutusTx.PIRTypes.html#PIRTerm"><span class="hs-identifier hs-type">PIRTerm</span></a><span> </span><span class="hs-glyph">-&gt;</span><span> </span><a href="#local-6989586621679215150"><span class="hs-identifier hs-type">m</span></a><span> </span><span class="hs-special">(</span><span class="hs-special">)</span><span>
+</span><a name="line-96"></a><a name="checkTyAbsBody"><a href="Language.PlutusTx.Compiler.ValueRestriction.html#checkTyAbsBody"><span class="hs-identifier">checkTyAbsBody</span></a></a><span> </span><a name="local-6989586621679215163"><a href="#local-6989586621679215163"><span class="hs-identifier">t</span></a></a><span> </span><span class="hs-glyph">=</span><span> </span><span class="hs-keyword">do</span><span>
+</span><a name="line-97"></a><span>    </span><a href="Language.PlutusTx.Compiler.Types.html#ConvertingContext"><span class="hs-identifier hs-var">ConvertingContext</span></a><span> </span><span class="hs-special">{</span><span class="hs-identifier">ccOpts</span><span class="hs-glyph">=</span><a name="local-6989586621679215164"><a href="#local-6989586621679215164"><span class="hs-identifier">opts</span></a></a><span class="hs-special">}</span><span> </span><span class="hs-glyph">&lt;-</span><span> </span><span class="hs-identifier hs-var">ask</span><span>
+</span><a name="line-98"></a><span>    </span><span class="hs-comment">-- we sometimes need to turn this off, as checking for term values also checks for normalized types at the moment</span><span>
+</span><a name="line-99"></a><span>    </span><span class="hs-identifier hs-var">unless</span><span> </span><span class="hs-special">(</span><span class="hs-identifier hs-var">not</span><span> </span><span class="hs-special">(</span><span class="hs-identifier">coCheckValueRestriction</span><span> </span><a href="#local-6989586621679215164"><span class="hs-identifier hs-var">opts</span></a><span class="hs-special">)</span><span> </span><span class="hs-operator hs-var">||</span><span> </span><span class="hs-identifier hs-var">PIR.isTermValue</span><span> </span><a href="#local-6989586621679215163"><span class="hs-identifier hs-var">t</span></a><span class="hs-special">)</span><span> </span><span class="hs-operator hs-var">$</span><span> </span><a href="Language.PlutusTx.Compiler.Error.html#throwPlain"><span class="hs-identifier hs-var">throwPlain</span></a><span> </span><span class="hs-operator hs-var">$</span><span> </span><a href="Language.PlutusTx.Compiler.Error.html#ValueRestrictionError"><span class="hs-identifier hs-var">ValueRestrictionError</span></a><span> </span><span class="hs-string">&quot;Type abstraction body is not a value&quot;</span><span>
+</span><a name="line-100"></a></pre></body></html>

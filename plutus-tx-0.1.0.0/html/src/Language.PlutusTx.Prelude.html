@@ -1,0 +1,55 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html xmlns="http://www.w3.org/1999/xhtml"><head><link rel="stylesheet" type="text/css" href="style.css" /><script type="text/javascript" src="highlight.js"></script></head><body><pre><span class="hs-pragma">{-# LANGUAGE NoImplicitPrelude #-}</span><span>
+</span><a name="line-2"></a><span class="hs-keyword">module</span><span> </span><span class="hs-identifier">Language.PlutusTx.Prelude</span><span> </span><span class="hs-special">(</span><span>
+</span><a name="line-3"></a><span>    </span><span class="hs-comment">-- $prelude</span><span>
+</span><a name="line-4"></a><span>    </span><span class="hs-comment">-- * String and tracing functions</span><span>
+</span><a name="line-5"></a><span>    </span><a href="Language.PlutusTx.Prelude.Stage0.html#toPlutusString"><span class="hs-identifier hs-var">toPlutusString</span></a><span class="hs-special">,</span><span>
+</span><a name="line-6"></a><span>    </span><a href="Language.PlutusTx.Prelude.Stage0.html#trace"><span class="hs-identifier hs-var">trace</span></a><span class="hs-special">,</span><span>
+</span><a name="line-7"></a><span>    </span><a href="Language.PlutusTx.Prelude.Stage0.html#traceH"><span class="hs-identifier hs-var">traceH</span></a><span class="hs-special">,</span><span>
+</span><a name="line-8"></a><span>    </span><span class="hs-comment">-- * Error</span><span>
+</span><a name="line-9"></a><span>    </span><a href="Language.PlutusTx.Prelude.Stage0.html#error"><span class="hs-identifier hs-var">error</span></a><span class="hs-special">,</span><span>
+</span><a name="line-10"></a><span>    </span><span class="hs-comment">-- * Boolean operators</span><span>
+</span><a name="line-11"></a><span>    </span><a href="Language.PlutusTx.Prelude.Stage0.html#and"><span class="hs-identifier hs-var">and</span></a><span class="hs-special">,</span><span>
+</span><a name="line-12"></a><span>    </span><a href="Language.PlutusTx.Prelude.Stage0.html#or"><span class="hs-identifier hs-var">or</span></a><span class="hs-special">,</span><span>
+</span><a name="line-13"></a><span>    </span><a href="Language.PlutusTx.Prelude.Stage0.html#not"><span class="hs-identifier hs-var">not</span></a><span class="hs-special">,</span><span>
+</span><a name="line-14"></a><span>    </span><span class="hs-comment">-- * Numbers</span><span>
+</span><a name="line-15"></a><span>    </span><a href="Language.PlutusTx.Prelude.Stage0.html#min"><span class="hs-identifier hs-var">min</span></a><span class="hs-special">,</span><span>
+</span><a name="line-16"></a><span>    </span><a href="Language.PlutusTx.Prelude.Stage0.html#max"><span class="hs-identifier hs-var">max</span></a><span class="hs-special">,</span><span>
+</span><a name="line-17"></a><span>    </span><span class="hs-comment">-- * Maybe</span><span>
+</span><a name="line-18"></a><span>    </span><a href="Language.PlutusTx.Prelude.Stage0.html#isJust"><span class="hs-identifier hs-var">isJust</span></a><span class="hs-special">,</span><span>
+</span><a name="line-19"></a><span>    </span><a href="Language.PlutusTx.Prelude.Stage0.html#isNothing"><span class="hs-identifier hs-var">isNothing</span></a><span class="hs-special">,</span><span>
+</span><a name="line-20"></a><span>    </span><a href="Language.PlutusTx.Prelude.Stage0.html#maybe"><span class="hs-identifier hs-var">maybe</span></a><span class="hs-special">,</span><span>
+</span><a name="line-21"></a><span>    </span><span class="hs-comment">-- * Lists</span><span>
+</span><a name="line-22"></a><span>    </span><a href="Language.PlutusTx.Prelude.Stage0.html#map"><span class="hs-identifier hs-var">map</span></a><span class="hs-special">,</span><span>
+</span><a name="line-23"></a><span>    </span><a href="Language.PlutusTx.Prelude.Stage0.html#foldr"><span class="hs-identifier hs-var">foldr</span></a><span class="hs-special">,</span><span>
+</span><a name="line-24"></a><span>    </span><a href="Language.PlutusTx.Prelude.Stage0.html#foldl"><span class="hs-identifier hs-var">foldl</span></a><span class="hs-special">,</span><span>
+</span><a name="line-25"></a><span>    </span><a href="Language.PlutusTx.Prelude.Stage1.html#length"><span class="hs-identifier hs-var">length</span></a><span class="hs-special">,</span><span>
+</span><a name="line-26"></a><span>    </span><a href="Language.PlutusTx.Prelude.Stage1.html#all"><span class="hs-identifier hs-var">all</span></a><span class="hs-special">,</span><span>
+</span><a name="line-27"></a><span>    </span><span class="hs-comment">-- * Hashes</span><span>
+</span><a name="line-28"></a><span>    </span><span class="hs-identifier hs-type">ByteString</span><span class="hs-special">,</span><span>
+</span><a name="line-29"></a><span>    </span><a href="Language.PlutusTx.Prelude.Stage0.html#txhash"><span class="hs-identifier hs-var">txhash</span></a><span class="hs-special">,</span><span>
+</span><a name="line-30"></a><span>    </span><a href="Language.PlutusTx.Prelude.Stage0.html#sha2_256"><span class="hs-identifier hs-var">sha2_256</span></a><span class="hs-special">,</span><span>
+</span><a name="line-31"></a><span>    </span><a href="Language.PlutusTx.Prelude.Stage0.html#sha3_256"><span class="hs-identifier hs-var">sha3_256</span></a><span class="hs-special">,</span><span>
+</span><a name="line-32"></a><span>    </span><a href="Language.PlutusTx.Prelude.Stage0.html#equalsByteString"><span class="hs-identifier hs-var">equalsByteString</span></a><span class="hs-special">,</span><span>
+</span><a name="line-33"></a><span>    </span><a href="Language.PlutusTx.Prelude.Stage0.html#takeByteString"><span class="hs-identifier hs-var">takeByteString</span></a><span class="hs-special">,</span><span>
+</span><a name="line-34"></a><span>    </span><a href="Language.PlutusTx.Prelude.Stage0.html#dropByteString"><span class="hs-identifier hs-var">dropByteString</span></a><span class="hs-special">,</span><span>
+</span><a name="line-35"></a><span>    </span><a href="Language.PlutusTx.Prelude.Stage0.html#concatenate"><span class="hs-identifier hs-var">concatenate</span></a><span>
+</span><a name="line-36"></a><span>    </span><span class="hs-special">)</span><span> </span><span class="hs-keyword">where</span><span>
+</span><a name="line-37"></a><span>
+</span><a name="line-38"></a><span class="hs-keyword">import</span><span>           </span><span class="hs-identifier">Data.ByteString.Lazy</span><span>             </span><span class="hs-special">(</span><span class="hs-identifier hs-type">ByteString</span><span class="hs-special">)</span><span>
+</span><a name="line-39"></a><span>
+</span><a name="line-40"></a><span class="hs-keyword">import</span><span>           </span><a href="Language.PlutusTx.Prelude.Stage0.html"><span class="hs-identifier">Language.PlutusTx.Prelude.Stage0</span></a><span>
+</span><a name="line-41"></a><span class="hs-keyword">import</span><span>           </span><a href="Language.PlutusTx.Prelude.Stage1.html"><span class="hs-identifier">Language.PlutusTx.Prelude.Stage1</span></a><span>
+</span><a name="line-42"></a><span>
+</span><a name="line-43"></a><span class="hs-comment">-- $prelude</span><span>
+</span><a name="line-44"></a><span class="hs-comment">-- The PlutusTx Prelude is a collection of useful functions that work with</span><span>
+</span><a name="line-45"></a><span class="hs-comment">-- builtin Haskell data types such as 'Maybe' and @[]@ (list).</span><span>
+</span><a name="line-46"></a><span class="hs-comment">--</span><span>
+</span><a name="line-47"></a><span class="hs-comment">-- Functions from the Prelude can be used with the the typed Template Haskell</span><span>
+</span><a name="line-48"></a><span class="hs-comment">-- splice operator @$$()@:</span><span>
+</span><a name="line-49"></a><span class="hs-comment">--</span><span>
+</span><a name="line-50"></a><span class="hs-comment">-- @</span><span>
+</span><a name="line-51"></a><span class="hs-comment">--   import qualified Language.PlutusTx.Prelude as P</span><span>
+</span><a name="line-52"></a><span class="hs-comment">--</span><span>
+</span><a name="line-53"></a><span class="hs-comment">--   [||  $$(P.traceH) &quot;plutus&quot; ... ||]</span><span>
+</span><a name="line-54"></a><span class="hs-comment">-- @</span><span>
+</span><a name="line-55"></a></pre></body></html>
