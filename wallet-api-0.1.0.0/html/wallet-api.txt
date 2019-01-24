@@ -8,6 +8,92 @@
 @package wallet-api
 @version 0.1.0.0
 
+
+-- | A type for intervals and associated functions.
+module Ledger.Interval
+
+-- | Slot number
+newtype Slot
+Slot :: Int -> Slot
+[getSlot] :: Slot -> Int
+
+-- | An interval of <tt>a</tt>s. The interval is closed below and open
+--   above, meaning that <tt>Interval (Just (10 :: Int)) (Just 11)</tt>
+--   contains a single value <tt>11</tt>. The interval is unbounded on
+--   either side: <tt>Interval Nothing (Just 12)</tt> contains all numbers
+--   smaller than <tt>12</tt>.
+data Interval a
+Interval :: Maybe a -> Maybe a -> Interval a
+[ivFrom] :: Interval a -> Maybe a
+[ivTo] :: Interval a -> Maybe a
+type SlotRange = Interval Slot
+
+-- | <tt>interval a b</tt> includes all values that are greater than or
+--   equal to <tt>a</tt> and smaller than <tt>b</tt>. Therefore it includes
+--   <tt>a</tt> but not it does not include <tt>b</tt>.
+interval :: Q (TExp (a -> a -> Interval a))
+
+-- | <tt>from a</tt> is an <a>Interval</a> that includes all values that
+--   are greater than or equal to <tt>a</tt>.
+from :: Q (TExp (a -> Interval a))
+
+-- | <tt>to a</tt> is an <a>Interval</a> that includes all values that are
+--   smaller than <tt>a</tt>.
+to :: Q (TExp (a -> Interval a))
+
+-- | A <a>SlotRange</a> that covers only a single slot.
+singleton :: Q (TExp (Slot -> SlotRange))
+
+-- | Check if a <a>SlotRange</a> is empty
+empty :: Q (TExp (SlotRange -> Bool))
+
+-- | A <a>SlotRange</a> that covers every slot.
+always :: Q (TExp SlotRange)
+
+-- | Check if <a>Slot</a> is contained in a <a>SlotRange</a>.
+member :: Q (TExp (Slot -> SlotRange -> Bool))
+
+-- | Number of <a>Slot</a>s covered by the interval. <tt>width (from x) ==
+--   Nothing</tt>
+width :: Q (TExp (SlotRange -> Maybe Int))
+
+-- | <tt>a <a>contains</a> b</tt> is true if the <a>SlotRange</a>
+--   <tt>b</tt> is entirely contained in <tt>a</tt>. That is, <tt>a
+--   <a>contains</a> b</tt> if for every slot <tt>s</tt>, if <tt>member s
+--   b</tt> then <tt>member s a</tt>.
+contains :: Q (TExp (SlotRange -> SlotRange -> Bool))
+
+-- | Check if a <a>Slot</a> is earlier than the beginning of a
+--   <a>SlotRange</a>
+before :: Q (TExp (Slot -> SlotRange -> Bool))
+
+-- | Check if a <a>Slot</a> is later than the end of a <a>SlotRange</a>
+after :: Q (TExp (Slot -> SlotRange -> Bool))
+instance Language.PlutusTx.Lift.Class.Typeable Ledger.Interval.Interval
+instance (Language.PlutusTx.Lift.Class.Typeable a, Language.PlutusTx.Lift.Class.Lift (GHC.Base.Maybe a)) => Language.PlutusTx.Lift.Class.Lift (Ledger.Interval.Interval a)
+instance Codec.Serialise.Class.Serialise a => Codec.Serialise.Class.Serialise (Ledger.Interval.Interval a)
+instance Data.Aeson.Types.ToJSON.ToJSON a => Data.Aeson.Types.ToJSON.ToJSON (Ledger.Interval.Interval a)
+instance Data.Aeson.Types.FromJSON.FromJSON a => Data.Aeson.Types.FromJSON.FromJSON (Ledger.Interval.Interval a)
+instance Data.Swagger.Internal.Schema.ToSchema a => Data.Swagger.Internal.Schema.ToSchema (Ledger.Interval.Interval a)
+instance GHC.Generics.Generic (Ledger.Interval.Interval a)
+instance GHC.Show.Show a => GHC.Show.Show (Ledger.Interval.Interval a)
+instance GHC.Classes.Ord a => GHC.Classes.Ord (Ledger.Interval.Interval a)
+instance GHC.Classes.Eq a => GHC.Classes.Eq (Ledger.Interval.Interval a)
+instance Language.PlutusTx.Lift.Class.Typeable Ledger.Interval.Slot
+instance Language.PlutusTx.Lift.Class.Lift Ledger.Interval.Slot
+instance Codec.Serialise.Class.Serialise Ledger.Interval.Slot
+instance GHC.Real.Integral Ledger.Interval.Slot
+instance GHC.Real.Real Ledger.Interval.Slot
+instance GHC.Num.Num Ledger.Interval.Slot
+instance Data.Aeson.Types.ToJSON.ToJSON Ledger.Interval.Slot
+instance Data.Aeson.Types.FromJSON.FromJSON Ledger.Interval.Slot
+instance Data.Swagger.Internal.Schema.ToSchema Ledger.Interval.Slot
+instance GHC.Generics.Generic Ledger.Interval.Slot
+instance GHC.Enum.Enum Ledger.Interval.Slot
+instance GHC.Show.Show Ledger.Interval.Slot
+instance GHC.Classes.Ord Ledger.Interval.Slot
+instance GHC.Classes.Eq Ledger.Interval.Slot
+
 module Ledger.Types
 
 -- | Cryptocurrency value
@@ -19,6 +105,7 @@ Value :: Int -> Value
 newtype Slot
 Slot :: Int -> Slot
 [getSlot] :: Slot -> Int
+type SlotRange = Interval Slot
 
 -- | The number of the last slot of a blockchain. Assumes that empty slots
 --   are represented as empty blocks (as opposed to no blocks). This is
@@ -59,6 +146,9 @@ scriptAddress :: ValidatorScript -> AddressOf (Digest SHA256)
 -- | Script
 data Script
 fromCompiledCode :: CompiledCode a -> Script
+
+-- | Compile a quoted Haskell expression to a <a>Script</a>
+compileScript :: Q (TExp a) -> Q (TExp Script)
 lifted :: Lift a => a -> Script
 applyScript :: Script -> Script -> Script
 evaluateScript :: Script -> ([String], Bool)
@@ -80,11 +170,14 @@ DataScript :: Script -> DataScript
 
 -- | Transaction including witnesses for its inputs
 data Tx
-Tx :: Set TxIn -> [TxOut] -> !Value -> !Value -> Tx
+Tx :: Set TxIn -> [TxOut] -> !Value -> !Value -> !SlotRange -> Tx
 [txInputs] :: Tx -> Set TxIn
 [txOutputs] :: Tx -> [TxOut]
 [txForge] :: Tx -> !Value
 [txFee] :: Tx -> !Value
+
+-- | The <a>SlotRange</a> during which this transaction may be validated
+[txValidRange] :: Tx -> !SlotRange
 
 -- | Transaction without witnesses for its inputs
 data TxStripped
@@ -139,14 +232,6 @@ TxOutRefOf :: TxIdOf h -> Int -> TxOutRefOf h
 -- | Index into the referenced transaction's outputs
 [txOutRefIdx] :: TxOutRefOf h -> Int
 type TxOutRef = TxOutRefOf (Digest SHA256)
-
--- | Transaction input that spends an output using the empty validator and
---   unit redeemer scripts.
-simpleInput :: TxOutRefOf a -> TxInOf a
-
--- | Transaction output locked by the empty validator and unit data
---   scripts.
-simpleOutput :: Value -> TxOut
 pubKeyTxIn :: TxOutRefOf h -> Signature -> TxInOf h
 scriptTxIn :: TxOutRefOf h -> ValidatorScript -> RedeemerScript -> TxInOf h
 
@@ -167,13 +252,6 @@ txOutRefs :: Tx -> [(TxOut, TxOutRef)]
 type Block = [Tx]
 type Blockchain = [Block]
 
--- | Ledger and transaction state available to both the validator and
---   redeemer scripts
-data BlockchainState
-BlockchainState :: Slot -> TxId -> BlockchainState
-[blockchainSlot] :: BlockchainState -> Slot
-[blockchainStateTxHash] :: BlockchainState -> TxId
-
 -- | Information about the state of the blockchain and about the
 --   transaction that is currently being validated, represented as a value
 --   in PLC.
@@ -183,9 +261,6 @@ BlockchainState :: Slot -> TxId -> BlockchainState
 --   suite) and pass it to the validator.
 newtype ValidationData
 ValidationData :: Script -> ValidationData
-
--- | Get blockchain state for a transaction
-state :: Tx -> Blockchain -> BlockchainState
 
 -- | Lookup a transaction by its hash
 transaction :: Blockchain -> TxOutRef -> Maybe Tx
@@ -209,16 +284,6 @@ unspentOutputs :: Blockchain -> Map TxOutRef TxOut
 --   inputs and outputs of a transaction.
 updateUtxo :: Tx -> Map TxOutRef TxOut -> Map TxOutRef TxOut
 
--- | Determine whether a transaction is valid in a given ledger
---   
---   <ul>
---   <li>The inputs refer to unspent outputs, which they unlock (input
---   validity).</li>
---   <li>The transaction preserves value (value preservation).</li>
---   <li>All values in the transaction are non-negative.</li>
---   </ul>
-validTx :: ValidationData -> Tx -> Blockchain -> Bool
-
 -- | The public key that a [[TxOut]] refers to
 txOutPubKey :: TxOutOf h -> Maybe PubKey
 
@@ -228,41 +293,11 @@ pubKeyTxo :: Blockchain -> TxOutRef -> Maybe PubKey
 -- | Check that all values in a transaction are no.
 validValuesTx :: Tx -> Bool
 
--- | Check whether a transaction output can be spent by the given
---   transaction input. This involves
---   
---   <ul>
---   <li>Checking that pay-to-script (P2S) output is spent by a P2S input,
---   and a pay-to-public key (P2PK) output is spend by a P2PK input</li>
---   <li>If it is a P2S input:</li>
---   <li>Verifying the hash of the validator script</li>
---   <li>Evaluating the validator script with the redeemer and data
---   script</li>
---   <li>If it is a P2PK input:</li>
---   <li>Verifying that the signature matches the public key</li>
---   </ul>
-validate :: ValidationData -> TxIn -> TxOut -> Bool
-
--- | () () () -&gt; () as a validator
---   
---   NB. The signature of a validator script is *d -&gt; r -&gt; v -&gt;
---   ()* where *d*, *r* and *v* are the (PLC) types of data script,
---   redeemer script, and validation data. *d*, *r* and *v* are determined
---   by the validator script itself (because applying it to values of
---   different types will cause the script to be ill-typed). As a result,
---   if you lock a transaction output with <a>emptyValidator</a>, you need
---   to provide <a>unitData</a>, <a>unitRedeemer</a> and
---   <a>unitValidationData</a> to consume it.
-emptyValidator :: ValidatorScript
-
 -- | () as a redeemer
 unitRedeemer :: RedeemerScript
 
 -- | () as a data script
 unitData :: DataScript
-
--- | () as validation data
-unitValidationData :: ValidationData
 
 -- | Evaluate a validator script with the given inputs
 runScript :: ValidationData -> ValidatorScript -> RedeemerScript -> DataScript -> ([String], Bool)
@@ -293,6 +328,7 @@ inScripts :: TxInOf h -> Maybe (ValidatorScript, RedeemerScript)
 -- | Signature of a transaction input that spends a "pay to public key"
 --   output
 inSignature :: TxInOf h -> Maybe Signature
+validRange :: Lens' Tx SlotRange
 instance Data.Aeson.Types.FromJSON.FromJSON Ledger.Types.ValidationData
 instance Data.Aeson.Types.ToJSON.ToJSON Ledger.Types.ValidationData
 instance GHC.Generics.Generic Ledger.Types.ValidationData
@@ -332,35 +368,6 @@ instance GHC.Generics.Generic (Ledger.Types.TxOutRefOf h)
 instance GHC.Classes.Ord h => GHC.Classes.Ord (Ledger.Types.TxOutRefOf h)
 instance GHC.Classes.Eq h => GHC.Classes.Eq (Ledger.Types.TxOutRefOf h)
 instance GHC.Show.Show h => GHC.Show.Show (Ledger.Types.TxOutRefOf h)
-instance Codec.Serialise.Class.Serialise (Ledger.Types.TxOutRefOf (Crypto.Hash.Types.Digest Crypto.Hash.SHA256.SHA256))
-instance Data.Aeson.Types.ToJSON.ToJSON (Ledger.Types.TxOutRefOf (Crypto.Hash.Types.Digest Crypto.Hash.SHA256.SHA256))
-instance Data.Aeson.Types.FromJSON.FromJSON (Ledger.Types.TxOutRefOf (Crypto.Hash.Types.Digest Crypto.Hash.SHA256.SHA256))
-instance Data.Swagger.Internal.Schema.ToSchema (Ledger.Types.TxOutRefOf (Crypto.Hash.Types.Digest Crypto.Hash.SHA256.SHA256))
-instance Codec.Serialise.Class.Serialise (Ledger.Types.TxInOf (Crypto.Hash.Types.Digest Crypto.Hash.SHA256.SHA256))
-instance Data.Aeson.Types.ToJSON.ToJSON (Ledger.Types.TxInOf (Crypto.Hash.Types.Digest Crypto.Hash.SHA256.SHA256))
-instance Data.Aeson.Types.FromJSON.FromJSON (Ledger.Types.TxInOf (Crypto.Hash.Types.Digest Crypto.Hash.SHA256.SHA256))
-instance Codec.Serialise.Class.Serialise (Ledger.Types.TxOutOf (Crypto.Hash.Types.Digest Crypto.Hash.SHA256.SHA256))
-instance Data.Aeson.Types.ToJSON.ToJSON (Ledger.Types.TxOutOf (Crypto.Hash.Types.Digest Crypto.Hash.SHA256.SHA256))
-instance Data.Aeson.Types.FromJSON.FromJSON (Ledger.Types.TxOutOf (Crypto.Hash.Types.Digest Crypto.Hash.SHA256.SHA256))
-instance GHC.Show.Show Ledger.Types.ValidationData
-instance Data.ByteArray.Types.ByteArrayAccess Ledger.Types.Tx
-instance Data.ByteArray.Types.ByteArrayAccess Ledger.Types.TxStripped
-instance Data.ByteArray.Types.ByteArrayAccess Ledger.Types.TxOut
-instance Data.ByteArray.Types.ByteArrayAccess Ledger.Types.TxIn
-instance Language.PlutusTx.Lift.Class.Typeable Ledger.Types.Slot
-instance Language.PlutusTx.Lift.Class.Lift Ledger.Types.Slot
-instance Codec.Serialise.Class.Serialise Ledger.Types.Slot
-instance GHC.Real.Integral Ledger.Types.Slot
-instance GHC.Real.Real Ledger.Types.Slot
-instance GHC.Num.Num Ledger.Types.Slot
-instance Data.Aeson.Types.ToJSON.ToJSON Ledger.Types.Slot
-instance Data.Aeson.Types.FromJSON.FromJSON Ledger.Types.Slot
-instance Data.Swagger.Internal.Schema.ToSchema Ledger.Types.Slot
-instance GHC.Generics.Generic Ledger.Types.Slot
-instance GHC.Enum.Enum Ledger.Types.Slot
-instance GHC.Show.Show Ledger.Types.Slot
-instance GHC.Classes.Ord Ledger.Types.Slot
-instance GHC.Classes.Eq Ledger.Types.Slot
 instance Data.Aeson.Types.FromJSON.FromJSON Ledger.Types.RedeemerScript
 instance Data.Aeson.Types.ToJSON.ToJSON Ledger.Types.RedeemerScript
 instance Codec.Serialise.Class.Serialise Ledger.Types.RedeemerScript
@@ -387,6 +394,21 @@ instance Data.Swagger.Internal.Schema.ToSchema a => Data.Swagger.Internal.Schema
 instance Codec.Serialise.Class.Serialise (Ledger.Types.AddressOf (Crypto.Hash.Types.Digest Crypto.Hash.SHA256.SHA256))
 instance Data.Aeson.Types.ToJSON.ToJSON (Ledger.Types.AddressOf (Crypto.Hash.Types.Digest Crypto.Hash.SHA256.SHA256))
 instance Data.Aeson.Types.FromJSON.FromJSON (Ledger.Types.AddressOf (Crypto.Hash.Types.Digest Crypto.Hash.SHA256.SHA256))
+instance Codec.Serialise.Class.Serialise (Ledger.Types.TxOutRefOf (Crypto.Hash.Types.Digest Crypto.Hash.SHA256.SHA256))
+instance Data.Aeson.Types.ToJSON.ToJSON (Ledger.Types.TxOutRefOf (Crypto.Hash.Types.Digest Crypto.Hash.SHA256.SHA256))
+instance Data.Aeson.Types.FromJSON.FromJSON (Ledger.Types.TxOutRefOf (Crypto.Hash.Types.Digest Crypto.Hash.SHA256.SHA256))
+instance Data.Swagger.Internal.Schema.ToSchema (Ledger.Types.TxOutRefOf (Crypto.Hash.Types.Digest Crypto.Hash.SHA256.SHA256))
+instance Codec.Serialise.Class.Serialise (Ledger.Types.TxInOf (Crypto.Hash.Types.Digest Crypto.Hash.SHA256.SHA256))
+instance Data.Aeson.Types.ToJSON.ToJSON (Ledger.Types.TxInOf (Crypto.Hash.Types.Digest Crypto.Hash.SHA256.SHA256))
+instance Data.Aeson.Types.FromJSON.FromJSON (Ledger.Types.TxInOf (Crypto.Hash.Types.Digest Crypto.Hash.SHA256.SHA256))
+instance Codec.Serialise.Class.Serialise (Ledger.Types.TxOutOf (Crypto.Hash.Types.Digest Crypto.Hash.SHA256.SHA256))
+instance Data.Aeson.Types.ToJSON.ToJSON (Ledger.Types.TxOutOf (Crypto.Hash.Types.Digest Crypto.Hash.SHA256.SHA256))
+instance Data.Aeson.Types.FromJSON.FromJSON (Ledger.Types.TxOutOf (Crypto.Hash.Types.Digest Crypto.Hash.SHA256.SHA256))
+instance GHC.Show.Show Ledger.Types.ValidationData
+instance Data.ByteArray.Types.ByteArrayAccess Ledger.Types.Tx
+instance Data.ByteArray.Types.ByteArrayAccess Ledger.Types.TxStripped
+instance Data.ByteArray.Types.ByteArrayAccess Ledger.Types.TxOut
+instance Data.ByteArray.Types.ByteArrayAccess Ledger.Types.TxIn
 instance GHC.Show.Show Ledger.Types.RedeemerScript
 instance GHC.Classes.Eq Ledger.Types.RedeemerScript
 instance GHC.Classes.Ord Ledger.Types.RedeemerScript
@@ -451,17 +473,17 @@ module Ledger.Validation
 
 -- | A pending transaction as seen by validator scripts.
 data PendingTx
-PendingTx :: [PendingTxIn] -> [PendingTxOut] -> Value -> Value -> Slot -> PendingTxIn -> PendingTx
+PendingTx :: [PendingTxIn] -> [PendingTxOut] -> Value -> Value -> PendingTxIn -> SlotRange -> PendingTx
 
 -- | Transaction inputs
 [pendingTxInputs] :: PendingTx -> [PendingTxIn]
 [pendingTxOutputs] :: PendingTx -> [PendingTxOut]
 [pendingTxFee] :: PendingTx -> Value
 [pendingTxForge] :: PendingTx -> Value
-[pendingTxSlot] :: PendingTx -> Slot
 
 -- | PendingTxIn being validated
 [pendingTxIn] :: PendingTx -> PendingTxIn
+[pendingTxValidRange] :: PendingTx -> SlotRange
 
 -- | Output of a pending transaction.
 data PendingTxOut
@@ -605,9 +627,6 @@ newtype UtxoIndex
 UtxoIndex :: Map TxOutRef TxOut -> UtxoIndex
 [getIndex] :: UtxoIndex -> Map TxOutRef TxOut
 
--- | An empty [[UtxoIndex]]
-empty :: UtxoIndex
-
 -- | Add a transaction to the index
 insert :: Tx -> UtxoIndex -> UtxoIndex
 
@@ -664,6 +683,10 @@ NegativeValue :: Tx -> ValidationError
 -- | (for pay-to-script outputs) Evaluation of the validator script failed
 ScriptFailure :: [String] -> ValidationError
 
+-- | The current slot is not covered by the transaction's validity slot
+--   range.
+CurrentSlotOutOfRange :: Slot -> ValidationError
+
 -- | Matching pair of transaction input and transaction output.
 data InOutMatch
 ScriptMatch :: TxIn -> ValidatorScript -> RedeemerScript -> DataScript -> (AddressOf (Digest SHA256)) -> InOutMatch
@@ -687,6 +710,7 @@ instance GHC.Generics.Generic Ledger.Index.ValidationError
 instance GHC.Show.Show Ledger.Index.ValidationError
 instance GHC.Classes.Ord Ledger.Index.ValidationError
 instance GHC.Classes.Eq Ledger.Index.ValidationError
+instance GHC.Base.Monoid Ledger.Index.UtxoIndex
 instance GHC.Base.Semigroup Ledger.Index.UtxoIndex
 instance GHC.Show.Show Ledger.Index.UtxoIndex
 instance GHC.Classes.Ord Ledger.Index.UtxoIndex
@@ -779,12 +803,6 @@ class MonadError WalletAPIError m => WalletDiagnostics m
 
 -- | Write some information to the log
 logMsg :: WalletDiagnostics m => Text -> m ()
-data Range a
-
--- | inclusive-exclusive
-Interval :: a -> a -> Range a
-GEQ :: a -> Range a
-LT :: a -> Range a
 
 -- | An action than can be run in response to a blockchain event. It
 --   receives its [[EventTrigger]] annotated with truth values.
@@ -810,38 +828,38 @@ keyPair :: Int -> KeyPair
 signature :: KeyPair -> Signature
 createPayment :: (Functor m, WalletAPI m) => Value -> m (Set TxIn)
 
--- | Create a transaction, and submit it TODO: Also compute the fee
-createTxAndSubmit :: (Monad m, WalletAPI m) => Set TxIn -> [TxOut] -> m Tx
+-- | Create a transaction and submit it. TODO: Also compute the fee
+createTxAndSubmit :: (Monad m, WalletAPI m) => SlotRange -> Set TxIn -> [TxOut] -> m Tx
 
 -- | Transfer some funds to an address locked by a script, returning the
 --   transaction that was submitted.
-payToScript :: (Monad m, WalletAPI m) => Address -> Value -> DataScript -> m Tx
+payToScript :: (Monad m, WalletAPI m) => SlotRange -> Address -> Value -> DataScript -> m Tx
 
 -- | Transfer some funds to an address locked by a script.
-payToScript_ :: (Monad m, WalletAPI m) => Address -> Value -> DataScript -> m ()
+payToScript_ :: (Monad m, WalletAPI m) => SlotRange -> Address -> Value -> DataScript -> m ()
 
 -- | Transfer some funds to an address locked by a public key, returning
 --   the transaction that was submitted.
-payToPublicKey :: (Monad m, WalletAPI m) => Value -> PubKey -> m Tx
+payToPublicKey :: (Monad m, WalletAPI m) => SlotRange -> Value -> PubKey -> m Tx
 
 -- | Transfer some funds to an address locked by a public key
-payToPublicKey_ :: (Monad m, WalletAPI m) => Value -> PubKey -> m ()
+payToPublicKey_ :: (Monad m, WalletAPI m) => SlotRange -> Value -> PubKey -> m ()
 
 -- | Transfer some funds to a number of script addresses, returning the
 --   transaction that was submitted.
-payToScripts :: (Monad m, WalletAPI m) => [(Address, Value, DataScript)] -> m Tx
+payToScripts :: (Monad m, WalletAPI m) => SlotRange -> [(Address, Value, DataScript)] -> m Tx
 
 -- | Transfer some funds to a number of script addresses.
-payToScripts_ :: (Monad m, WalletAPI m) => [(Address, Value, DataScript)] -> m ()
+payToScripts_ :: (Monad m, WalletAPI m) => SlotRange -> [(Address, Value, DataScript)] -> m ()
 
 -- | Collect all unspent outputs from a pay to script address and transfer
 --   them to a public key owned by us.
-collectFromScript :: (Monad m, WalletAPI m) => ValidatorScript -> RedeemerScript -> m ()
+collectFromScript :: (Monad m, WalletAPI m) => SlotRange -> ValidatorScript -> RedeemerScript -> m ()
 
 -- | Given the pay to script address of the <a>ValidatorScript</a>, collect
 --   from it all the inputs that were produced by a specific transaction,
 --   using the <a>RedeemerScript</a>.
-collectFromScriptTxn :: (Monad m, WalletAPI m) => ValidatorScript -> RedeemerScript -> TxId -> m ()
+collectFromScriptTxn :: (Monad m, WalletAPI m) => SlotRange -> ValidatorScript -> RedeemerScript -> TxId -> m ()
 
 -- | Create a <a>TxOut</a> that pays to a public key owned by us
 ownPubKeyTxOut :: (Monad m, WalletAPI m) => Value -> m TxOut
@@ -851,19 +869,66 @@ ownPubKey :: (Functor m, WalletAPI m) => m PubKey
 
 -- | Generate a <a>Signature</a> with the wallet's own private key
 ownSignature :: (Functor m, WalletAPI m) => m Signature
+
+-- | An interval of <tt>a</tt>s. The interval is closed below and open
+--   above, meaning that <tt>Interval (Just (10 :: Int)) (Just 11)</tt>
+--   contains a single value <tt>11</tt>. The interval is unbounded on
+--   either side: <tt>Interval Nothing (Just 12)</tt> contains all numbers
+--   smaller than <tt>12</tt>.
+data Interval a
+Interval :: Maybe a -> Maybe a -> Interval a
+[ivFrom] :: Interval a -> Maybe a
+[ivTo] :: Interval a -> Maybe a
+type SlotRange = Interval Slot
+
+-- | An open-ended <a>SlotRange</a> that begins at slot 1.
+defaultSlotRange :: SlotRange
+
+-- | An inclusive-exclusive interval
+interval :: a -> a -> Interval a
+
+-- | <tt>intervalFrom a</tt> includes all values greater than or equal to
+--   <tt>a</tt>, including <tt>a</tt> itself.
+intervalFrom :: a -> Interval a
+
+-- | <tt>intervalTo a</tt> includes all values smaller than <tt>a</tt>, but
+--   not <tt>a</tt> itself.
+intervalTo :: a -> Interval a
+
+-- | A <a>SlotRange</a> that covers a single slot
+singleton :: Slot -> SlotRange
+
+-- | Check whether a <a>SlotRange</a> is empty
+empty :: SlotRange -> Bool
+
+-- | A <a>SlotRange</a> that covers all the slots
+always :: SlotRange
+
+-- | Check whether an <a>Interval</a> <tt>a</tt> includes an <tt>a</tt>.
+member :: Ord a => a -> Interval a -> Bool
+
+-- | The number of slots included in the <a>SlotRange</a>
+width :: SlotRange -> Maybe Int
+
+-- | Check if a <a>Slot</a> is before a <a>SlotRange</a>
+before :: Slot -> SlotRange -> Bool
+
+-- | Check if a <a>Slot</a> is after a <a>SlotRange</a>
+after :: Slot -> SlotRange -> Bool
+contains :: SlotRange -> SlotRange -> Bool
 type EventTrigger = Fix EventTriggerF
 
 -- | An [[EventTrigger]] where each level is annotated with a value of
 --   <tt>a</tt>
 type AnnotatedEventTrigger a = Fix (Compose ((,) a) EventTriggerF)
 data EventTriggerF f
-And :: f -> f -> EventTriggerF f
-Or :: f -> f -> EventTriggerF f
-Not :: f -> EventTriggerF f
-PAlways :: EventTriggerF f
-PNever :: EventTriggerF f
-SlotRange :: !(Range Slot) -> EventTriggerF f
-FundsAtAddress :: !Address -> !(Range Value) -> EventTriggerF f
+TAnd :: f -> f -> EventTriggerF f
+TOr :: f -> f -> EventTriggerF f
+TNot :: f -> EventTriggerF f
+TAlways :: EventTriggerF f
+TNever :: EventTriggerF f
+TSlotRange :: !SlotRange -> EventTriggerF f
+TFundsAtAddress :: !Address -> !(Interval Value) -> EventTriggerF f
 
 -- | `andT l r` is true when <tt>l</tt> and <tt>r</tt> are true.
 andT :: EventTrigger -> EventTrigger -> EventTrigger
@@ -881,11 +946,11 @@ alwaysT :: EventTrigger
 neverT :: EventTrigger
 
 -- | `slotRangeT r` is true when the slot number is in the range <tt>r</tt>
-slotRangeT :: Range Slot -> EventTrigger
+slotRangeT :: SlotRange -> EventTrigger
 
 -- | `fundsAtAddressT a r` is true when the funds at <tt>a</tt> are in the
 --   range <tt>r</tt>
-fundsAtAddressT :: Address -> Range Value -> EventTrigger
+fundsAtAddressT :: Address -> Interval Value -> EventTrigger
 
 -- | Check if the given slot number and UTXOs match the conditions of an
 --   [[EventTrigger]]
@@ -932,13 +997,6 @@ instance GHC.Base.Functor Wallet.API.EventTriggerF
 instance GHC.Show.Show f => GHC.Show.Show (Wallet.API.EventTriggerF f)
 instance GHC.Classes.Ord f => GHC.Classes.Ord (Wallet.API.EventTriggerF f)
 instance GHC.Classes.Eq f => GHC.Classes.Eq (Wallet.API.EventTriggerF f)
-instance GHC.Generics.Generic (Wallet.API.Range a)
-instance Data.Traversable.Traversable Wallet.API.Range
-instance Data.Foldable.Foldable Wallet.API.Range
-instance GHC.Base.Functor Wallet.API.Range
-instance GHC.Show.Show a => GHC.Show.Show (Wallet.API.Range a)
-instance GHC.Classes.Ord a => GHC.Classes.Ord (Wallet.API.Range a)
-instance GHC.Classes.Eq a => GHC.Classes.Eq (Wallet.API.Range a)
 instance Data.Aeson.Types.ToJSON.ToJSON Wallet.API.KeyPair
 instance Data.Aeson.Types.FromJSON.FromJSON Wallet.API.KeyPair
 instance GHC.Show.Show Wallet.API.KeyPair
@@ -1093,7 +1151,21 @@ validateEm :: EmulatorState -> Tx -> Maybe ValidationError
 
 -- | Validate a block in an [[EmulatorState]], returning the valid
 --   transactions and all success/failure events
-validateBlock :: EmulatorState -> [Tx] -> ([Tx], [EmulatorEvent])
+validateBlock :: EmulatorState -> [Tx] -> ValidatedBlock
+
+-- | Result of validating a block
+data ValidatedBlock
+ValidatedBlock :: [Tx] -> [EmulatorEvent] -> [Tx] -> ValidatedBlock
+
+-- | Transactions that have been validated
+[vlbValid] :: ValidatedBlock -> [Tx]
+
+-- | Transaction validation events
+[vlbEvents] :: ValidatedBlock -> [EmulatorEvent]
+
+-- | Transactions that haven't been validated because the current slot is
+--   not in their validation interval
+[vlbRest] :: ValidatedBlock -> [Tx]
 liftMockWallet :: (MonadState EmulatorState m) => Wallet -> MockWallet a -> m ([Tx], Either WalletAPIError a)
 evalEmulated :: (MonadEmulator m) => Event MockWallet a -> m a
 processEmulated :: (MonadEmulator m) => Trace MockWallet a -> m a
@@ -1243,6 +1315,9 @@ runTraceOn :: MonadGen m => GeneratorModel -> Trace MockWallet a -> m (Either As
 -- | Split a value into max. n positive-valued parts such that the sum of
 --   the parts equals the original value.
 splitVal :: (MonadGen m, Integral n) => Int -> n -> m [n]
+
+-- | Validate a transaction in a mockchain
+validateMockchain :: Mockchain -> Tx -> Maybe ValidationError
 instance GHC.Show.Show Wallet.Generators.Mockchain
 instance GHC.Show.Show Wallet.Generators.GeneratorModel
 

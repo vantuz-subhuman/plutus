@@ -9,10 +9,11 @@
 
 module Playground.Interpreter
 replaceModuleName :: Text -> Text
+ensureMkFunctionExists :: Text -> Text
 mkCompileScript :: Text -> Text
 avoidUnsafe :: (MonadError PlaygroundError m) => SourceCode -> m ()
 runscript :: (MonadIO m, MonadError PlaygroundError m) => Handle -> FilePath -> Text -> m (ExitCode, String, String)
-compile :: (MonadMask m, MonadIO m, MonadError PlaygroundError m) => SourceCode -> m [FunctionSchema Schema]
+compile :: (MonadMask m, MonadIO m, MonadError PlaygroundError m) => SourceCode -> m CompilationResult
 runFunction :: (MonadMask m, MonadIO m, MonadError PlaygroundError m) => Evaluation -> m (Blockchain, [EmulatorEvent], [(Wallet, Value)])
 mkRunScript :: Text -> Text -> Text
 runghcOpts :: [String]
